@@ -5,7 +5,7 @@ SRC := src
 BUILD_DIR := build
 
 # User controllable C flags.
-CFLAGS := -g -O0 -pipe
+CFLAGS := -ggdb -O0 -pipe
 
 # User controllable linker flags. We set none by default.
 LDFLAGS :=
@@ -68,3 +68,8 @@ iso: all
 .PHONY: boot
 boot: iso
 	qemu-system-x86_64 -cdrom $(BUILD_DIR)/side-hOS.iso
+
+.PHONY: debug
+debug: iso
+	qemu-system-x86_64 -cdrom $(BUILD_DIR)/side-hOS.iso \
+        -S -s

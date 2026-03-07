@@ -105,7 +105,7 @@ void kmain(void) {
 
     // Ensure we got a framebuffer.
     if (framebuffer_request.response == NULL
-     || framebuffer_request.response->framebuffer_count < 1) {
+        || framebuffer_request.response->framebuffer_count < 1) {
         hcf();
     }
 
@@ -113,9 +113,17 @@ void kmain(void) {
     struct limine_framebuffer *framebuffer = framebuffer_request.response->framebuffers[0];
 
     // Note: we assume the framebuffer model is RGB with 32-bit pixels.
-    for (size_t i = 0; i < 100; i++) {
-        volatile uint32_t *fb_ptr = framebuffer->address;
-        fb_ptr[i * (framebuffer->pitch / 4) + i] = 0xffffff;
+    volatile uint8_t *fb_ptr = framebuffer->address;
+    for (uint64_t y = 0; y < framebuffer->height; y++) {
+        for (uint64_t x = 0; x < framebuffer->width; x++) {
+            uint32_t color;
+            if (x > y){
+                color = 0xFF << framebuffer->red_mask_shift;
+            } else {
+                color = 0xFF << framebuffer->blue_mask_shift;
+            }
+            *(uint32_t*)(fb_ptr + y * framebuffer->pitch + x * (framebuffer->bpp / 8)) = color;
+        }
     }
 
     // We're done, just hang...
