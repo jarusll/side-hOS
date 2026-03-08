@@ -2,18 +2,16 @@
 #include <stddef.h>
 #include <stdbool.h>
 #include "limine.h"
+#include "font8x16.h"
 
-// Set the base revision to 5, this is recommended as this is the latest
-// base revision described by the Limine boot protocol specification.
-// See specification for further info.
+void draw_pixel(uint64_t x, uint64_t y, uint32_t color, struct limine_framebuffer *framebuffer);
+void draw_char(uint64_t x, uint64_t y, uint8_t c, struct limine_framebuffer *framebuffer);
+
+// LIMINE Boot Protocol Specification: https://codeberg.org/Limine/limine-protocol/src/branch/trunk/PROTOCOL.md
+// See linker script for how these are placed in the binary - ../linker.lds
 
 __attribute__((used, section(".limine_requests")))
 static volatile uint64_t limine_base_revision[] = LIMINE_BASE_REVISION(5);
-
-// The Limine requests can be placed anywhere, but it is important that
-// the compiler does not optimise them away, so, usually, they should
-// be made volatile or equivalent, _and_ they should be accessed at least
-// once or marked as used with the "used" attribute as done here.
 
 __attribute__((used, section(".limine_requests")))
 static volatile struct limine_framebuffer_request framebuffer_request = {
@@ -21,21 +19,13 @@ static volatile struct limine_framebuffer_request framebuffer_request = {
     .revision = 0
 };
 
-// Finally, define the start and end markers for the Limine requests.
-// These can also be moved anywhere, to any .c file, as seen fit.
-
 __attribute__((used, section(".limine_requests_start")))
 static volatile uint64_t limine_requests_start_marker[] = LIMINE_REQUESTS_START_MARKER;
 
 __attribute__((used, section(".limine_requests_end")))
 static volatile uint64_t limine_requests_end_marker[] = LIMINE_REQUESTS_END_MARKER;
 
-// GCC and Clang reserve the right to generate calls to the following
-// 4 functions even if they are not directly called.
-// Implement them as the C specification mandates.
-// DO NOT remove or rename these functions, or stuff will eventually break!
-// They CAN be moved to a different .c file.
-
+// GCC wants these 4 functions
 void *memcpy(void *restrict dest, const void *restrict src, size_t n) {
     uint8_t *restrict pdest = (uint8_t *restrict)dest;
     const uint8_t *restrict psrc = (const uint8_t *restrict)src;
@@ -87,45 +77,62 @@ int memcmp(const void *s1, const void *s2, size_t n) {
     return 0;
 }
 
-// Halt and catch fire function.
-static void hcf(void) {
+static void halt(void) {
     for (;;) {
         asm ("hlt");
     }
 }
 
-// The following will be our kernel's entry point.
-// If renaming kmain() to something else, make sure to change the
-// linker script accordingly.
+typedef struct {
+    struct limine_framebuffer *framebuffer;
+    int8_t width;
+    int8_t height;
+} Environment;
+
 void kmain(void) {
-    // Ensure the bootloader actually understands our base revision (see spec).
+    // Ensure the bootloader actually understands our base revision
     if (LIMINE_BASE_REVISION_SUPPORTED(limine_base_revision) == false) {
-        hcf();
+        halt();
     }
+
+    static Environment env = {0};
+    env.framebuffer = NULL;
+    env.width = 80;
+    env.height = 25;
 
     // Ensure we got a framebuffer.
     if (framebuffer_request.response == NULL
         || framebuffer_request.response->framebuffer_count < 1) {
-        hcf();
+        halt();
     }
+    env.framebuffer = framebuffer_request.response->framebuffers[0];
 
-    // Fetch the first framebuffer.
-    struct limine_framebuffer *framebuffer = framebuffer_request.response->framebuffers[0];
-
-    // Note: we assume the framebuffer model is RGB with 32-bit pixels.
-    volatile uint8_t *fb_ptr = framebuffer->address;
-    for (uint64_t y = 0; y < framebuffer->height; y++) {
-        for (uint64_t x = 0; x < framebuffer->width; x++) {
-            uint32_t color;
-            if (x > y){
-                color = 0xFF << framebuffer->red_mask_shift;
-            } else {
-                color = 0xFF << framebuffer->blue_mask_shift;
-            }
-            *(uint32_t*)(fb_ptr + y * framebuffer->pitch + x * (framebuffer->bpp / 8)) = color;
+    // See ../limine.conf for resolution and bytes per pixel settings
+    for (uint64_t y = 0; y < env.framebuffer->height; y++) {
+        for (uint64_t x = 0; x < env.framebuffer->width; x++) {
+            uint32_t color = 0xFF << env.framebuffer->red_mask_shift;
+            draw_pixel(x, y, color, env.framebuffer);
         }
     }
 
-    // We're done, just hang...
-    hcf();
+    draw_char(0, 0, 65, env.framebuffer);
+
+    halt();
+}
+
+void draw_pixel(uint64_t x, uint64_t y, uint32_t color, struct limine_framebuffer *framebuffer) {
+    volatile uint8_t *fb_ptr = framebuffer->address;
+    *(uint32_t*)(fb_ptr + y * framebuffer->pitch + x * (framebuffer->bpp / 8)) = color;
+}
+
+void draw_char(uint64_t x, uint64_t y, uint8_t c, struct limine_framebuffer *framebuffer) {
+    uint32_t white = 0xFFFFFFFF;
+    uint32_t black = 0xFF << framebuffer->red_mask_shift;
+    for (uint64_t j = 0; j < 16; j++) {
+        uint8_t row = font8x16[c][j];
+        for (uint64_t i = 0; i < 8; i++) {
+            uint8_t pixel = row & (1 << i);
+            draw_pixel(x * 8 + i, y * 16 + j, pixel ? white : black, framebuffer);
+        }
+    }
 }
