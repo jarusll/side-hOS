@@ -4,8 +4,8 @@
 #include "limine.h"
 #include "font8x16.h"
 
-void draw_pixel(uint64_t x, uint64_t y, uint32_t color, struct limine_framebuffer *framebuffer);
-void draw_char(uint64_t x, uint64_t y, uint8_t c, struct limine_framebuffer *framebuffer);
+#define DEFAULT_COLOR_SCHEME ((ColorScheme){ .fg = 0xFFFFFFFF, .bg = 0xFF })
+#define DEFAULT_CURSOR ((TTYPoint){.x = 0, .y = 0})
 
 // LIMINE Boot Protocol Specification: https://codeberg.org/Limine/limine-protocol/src/branch/trunk/PROTOCOL.md
 // See linker script for how these are placed in the binary - ../linker.lds
@@ -84,10 +84,38 @@ static void halt(void) {
 }
 
 typedef struct {
+    uint8_t x;
+    uint8_t y;
+} TTYPoint;
+
+typedef struct {
+    TTYPoint position;
+} TTYCursor;
+
+typedef struct {
+    uint32_t fg;
+    uint32_t bg;
+} ColorScheme;
+
+typedef struct {
+    char character;
+    ColorScheme color;
+} TTYCell;
+
+typedef struct {
     struct limine_framebuffer *framebuffer;
+    TTYCell buffer[25][80];
+    TTYPoint cursor;
     int8_t width;
     int8_t height;
-} Environment;
+    ColorScheme color_scheme;
+} TTYEnvironment;
+
+void draw_pixel(uint64_t x, uint64_t y, uint32_t color, struct limine_framebuffer *framebuffer);
+void draw_char(uint64_t x, uint64_t y, uint8_t c, struct limine_framebuffer *framebuffer);
+void tty_cursor(uint8_t x, uint8_t y, TTYEnvironment *env);
+void tty_char(uint8_t x, uint8_t y, uint8_t c, TTYEnvironment *env);
+void tty(TTYEnvironment *env);
 
 void kmain(void) {
     // Ensure the bootloader actually understands our base revision
@@ -95,10 +123,16 @@ void kmain(void) {
         halt();
     }
 
-    static Environment env = {0};
-    env.framebuffer = NULL;
+    static TTYEnvironment env = {0};
+    env.cursor = DEFAULT_CURSOR;
+    env.color_scheme = DEFAULT_COLOR_SCHEME;
     env.width = 80;
     env.height = 25;
+    env.buffer[0][0].character = (uint8_t)'>';
+    env.cursor = (TTYPoint){
+        .x = 1,
+        .y = 0
+    };
 
     // Ensure we got a framebuffer.
     if (framebuffer_request.response == NULL
@@ -107,17 +141,51 @@ void kmain(void) {
     }
     env.framebuffer = framebuffer_request.response->framebuffers[0];
 
-    // See ../limine.conf for resolution and bytes per pixel settings
-    for (uint64_t y = 0; y < env.framebuffer->height; y++) {
-        for (uint64_t x = 0; x < env.framebuffer->width; x++) {
-            uint32_t color = 0xFF << env.framebuffer->red_mask_shift;
-            draw_pixel(x, y, color, env.framebuffer);
-        }
-    }
-
-    draw_char(0, 0, 65, env.framebuffer);
+    tty(&env);
+    // See ../limine.conf for resolution and bits per pixel settings
+    // for (uint64_t y = 0; y < env.framebuffer->height; y++) {
+    //     for (uint64_t x = 0; x < env.framebuffer->width; x++) {
+    //         uint32_t color = 0xFF << env.framebuffer->red_mask_shift;
+    //         draw_pixel(x, y, color, env.framebuffer);
+    //     }
+    // }
 
     halt();
+}
+
+void tty(TTYEnvironment *env){
+    while(1){
+        // draw buffer
+        for (int8_t x = 0; x < env->width; x++){
+            for (int8_t y = 0; y < env->height; y++){
+                tty_char(x, y, env->buffer[y][x].character, env);
+            }
+        }
+
+        // draw cursor
+        tty_cursor(env->cursor.x, env->cursor.y, env);
+        while(1);
+    }
+}
+
+void tty_char(uint8_t x, uint8_t y, uint8_t c, TTYEnvironment *env){
+    for (uint64_t j = 0; j < 16; j++) {
+        uint8_t row = font8x16[c][j];
+        for (uint64_t i = 0; i < 8; i++) {
+            uint8_t pixel = row & (1 << (7 - i));
+            draw_pixel(x * 8 + i, y * 16 + j, pixel ? env->color_scheme.fg : env->color_scheme.bg, env->framebuffer);
+        }
+    }
+}
+
+void tty_cursor(uint8_t x, uint8_t y, TTYEnvironment *env){
+    for (uint64_t j = 0; j < 16; j++) {
+        uint8_t row = cursor8x16[j];
+        for (uint64_t i = 0; i < 8; i++) {
+            uint8_t pixel = row & (1 << (7 - i));
+            draw_pixel(x * 8 + i, y * 16 + j, pixel ? env->color_scheme.fg : env->color_scheme.bg, env->framebuffer);
+        }
+    }
 }
 
 void draw_pixel(uint64_t x, uint64_t y, uint32_t color, struct limine_framebuffer *framebuffer) {
@@ -136,3 +204,7 @@ void draw_char(uint64_t x, uint64_t y, uint8_t c, struct limine_framebuffer *fra
         }
     }
 }
+
+// void stdio(char *str) {
+
+// }
