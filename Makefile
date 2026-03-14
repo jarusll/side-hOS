@@ -42,19 +42,23 @@ override LDFLAGS += \
     -T linker.lds
 
 # Virt flags
-QEMU_FLAGS := -m 128M -cdrom $(BUILD_DIR)/side-hOS.iso -serial stdio -smp 2
+QEMU_FLAGS := -m 128M -cdrom $(BUILD_DIR)/side-hOS.iso -serial stdio -display none
 
 # Default target. This must come first, before header dependencies.
 .PHONY: all
 all: $(BUILD_DIR)/kernel.elf
 
 # Link rules for the final executable.
-$(BUILD_DIR)/kernel.elf: $(BUILD_DIR)/kernel.o
+$(BUILD_DIR)/kernel.elf: $(BUILD_DIR)/kernel.o $(BUILD_DIR)/serial.o
 	mkdir -p "$(dir $@)"
-	$(LD) $(LDFLAGS) $< -o $@
+	$(LD) $(LDFLAGS) $^ -o $@
 
 # Compilation rules for *.c files.
 $(BUILD_DIR)/kernel.o: $(SRC)/kernel.c
+	mkdir -p "$(dir $@)"
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/serial.o: $(SRC)/serial.c
 	mkdir -p "$(dir $@)"
 	$(CC) $(CFLAGS) -c $< -o $@
 

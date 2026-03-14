@@ -1,4 +1,6 @@
 #include "kernel.h"
+#include "serial.h"
+
 // LIMINE Boot Protocol Specification: https://codeberg.org/Limine/limine-protocol/src/branch/trunk/PROTOCOL.md
 // See linker script for how these are placed in the binary - ../linker.lds
 
@@ -50,7 +52,14 @@ static void halt(void) {
     }
 }
 
-static TTYEnvironment env = {0};
+// static TTYEnvironment env = {0};
+
+typedef struct {
+    char command[256];
+    int8_t cursor;
+} Command;
+
+static Command CommandContext = {0};
 
 void kmain(void) {
     // Ensure the bootloader actually understands our base revision
@@ -58,22 +67,22 @@ void kmain(void) {
         halt();
     }
 
-    env.cursor = DEFAULT_CURSOR;
-    env.color_scheme = DEFAULT_COLOR_SCHEME;
-    env.width = 80;
-    env.height = 25;
-    env.buffer[0][0].character = (uint8_t)'>';
-    env.cursor = (TTYPoint){
-        .x = 1,
-        .y = 0
-    };
+    // env.cursor = DEFAULT_CURSOR;
+    // env.color_scheme = DEFAULT_COLOR_SCHEME;
+    // env.width = 80;
+    // env.height = 25;
+    // env.buffer[0][0].character = (uint8_t)'>';
+    // env.cursor = (TTYPoint){
+    //     .x = 1,
+    //     .y = 0
+    // };
 
     // Ensure we got a framebuffer.
-    if (framebuffer_request.response == NULL
-        || framebuffer_request.response->framebuffer_count < 1) {
-        halt();
-    }
-    env.framebuffer = framebuffer_request.response->framebuffers[0];
+    // if (framebuffer_request.response == NULL
+    //     || framebuffer_request.response->framebuffer_count < 1) {
+    //     halt();
+    // }
+    // env.framebuffer = framebuffer_request.response->framebuffers[0];
 
     // Ensure we got the memmap response
     if (memmap_request.response == NULL
@@ -89,83 +98,110 @@ void kmain(void) {
         halt();
     }
 
+    serial_init();
+    while (1){
+        serial_write('>');
+waitForInput:
+        while(!serial_received());
+        while (serial_received()){
+            uint8_t character = serial_read();
+            if (character == 0x08 || character == 0x7F) {   // backspace
+                serial_write('\b');
+                serial_write(' ');
+                serial_write('\b');
+                CommandContext.cursor--;
+                CommandContext.command[CommandContext.cursor] = '\0';
+            } else if (character == '\r' || character == '\n') {
+                serial_write('\r');
+                serial_write('\n');
+                command_eval();
+                serial_write('\r');
+                serial_write('\n');
+                serial_write('>');
+            } else {
+                serial_write(character);
+                CommandContext.command[CommandContext.cursor] = character;
+                CommandContext.cursor++;
+                CommandContext.command[CommandContext.cursor] = '\0';
+            }
+            goto waitForInput;
+        }
+    }
+
     // TODO
     // hhdm_request
-
-    tty(&env);
-    // See ../limine.conf for resolution and bits per pixel settings
-    // for (uint64_t y = 0; y < env.framebuffer->height; y++) {
-    //     for (uint64_t x = 0; x < env.framebuffer->width; x++) {
-    //         uint32_t color = 0xFF << env.framebuffer->red_mask_shift;
-    //         draw_pixel(x, y, color, env.framebuffer);
-    //     }
-    // }
 
     halt();
 }
 
-void tty(TTYEnvironment *env){
-    while(1){
-        // draw buffer
-        for (int8_t x = 0; x < env->width; x++){
-            for (int8_t y = 0; y < env->height; y++){
-                tty_char(x, y, env->buffer[y][x].character);
-            }
-        }
+// GCC wants these 4 functions, ignore the squigglies in vscode
+void *memcpy(void *restrict dest, const void *restrict src, size_t n) {
+    uint8_t *restrict pdest = (uint8_t *restrict)dest;
+    const uint8_t *restrict psrc = (const uint8_t *restrict)src;
 
-        // draw cursor
-        tty_cursor(env->cursor.x, env->cursor.y);
-        while(1);
+    for (size_t i = 0; i < n; i++) {
+        pdest[i] = psrc[i];
     }
+
+    return dest;
 }
 
-void tty_char(uint8_t x, uint8_t y, uint8_t c){
-    for (uint64_t j = 0; j < 16; j++) {
-        uint8_t row = font8x16[c][j];
-        for (uint64_t i = 0; i < 8; i++) {
-            uint8_t pixel = row & (1 << (7 - i));
-            draw_pixel(x * 8 + i, y * 16 + j, pixel ? env.color_scheme.fg : env.color_scheme.bg);
-        }
+void *memset(void *s, int c, size_t n) {
+    uint8_t *p = (uint8_t *)s;
+
+    for (size_t i = 0; i < n; i++) {
+        p[i] = (uint8_t)c;
     }
+
+    return s;
 }
 
-void tty_put_char(char ch){
-    tty_char(env.cursor.x, env.cursor.y, ch);
-}
+void *memmove(void *dest, const void *src, size_t n) {
+    uint8_t *pdest = (uint8_t *)dest;
+    const uint8_t *psrc = (const uint8_t *)src;
 
-void tty_cursor(uint8_t x, uint8_t y){
-    for (uint64_t j = 0; j < 16; j++) {
-        uint8_t row = cursor8x16[j];
-        for (uint64_t i = 0; i < 8; i++) {
-            uint8_t pixel = row & (1 << (7 - i));
-            draw_pixel(x * 8 + i, y * 16 + j, pixel ? env.color_scheme.fg : env.color_scheme.bg);
+    if ((uintptr_t)src > (uintptr_t)dest) {
+        for (size_t i = 0; i < n; i++) {
+            pdest[i] = psrc[i];
+        }
+    } else if ((uintptr_t)src < (uintptr_t)dest) {
+        for (size_t i = n; i > 0; i--) {
+            pdest[i-1] = psrc[i-1];
         }
     }
+
+    return dest;
 }
 
-void draw_pixel(uint64_t x, uint64_t y, uint32_t color) {
-    struct limine_framebuffer *framebuffer = env.framebuffer;
-    volatile uint8_t *fb_ptr = framebuffer->address;
-    *(uint32_t*)(fb_ptr + y * framebuffer->pitch + x * (framebuffer->bpp / 8)) = color;
-}
+int memcmp(const void *s1, const void *s2, size_t n) {
+    const uint8_t *p1 = (const uint8_t *)s1;
+    const uint8_t *p2 = (const uint8_t *)s2;
 
-void draw_char(uint64_t x, uint64_t y, uint8_t c) {
-    uint32_t white = 0xFFFFFFFF;
-    struct limine_framebuffer *framebuffer = env.framebuffer;
-    uint32_t black = 0xFF << env.framebuffer->red_mask_shift;
-    for (uint64_t j = 0; j < 16; j++) {
-        uint8_t row = font8x16[c][j];
-        for (uint64_t i = 0; i < 8; i++) {
-            uint8_t pixel = row & (1 << i);
-            draw_pixel(x * 8 + i, y * 16 + j, pixel ? white : black);
+    for (size_t i = 0; i < n; i++) {
+        if (p1[i] != p2[i]) {
+            return p1[i] < p2[i] ? -1 : 1;
         }
     }
+
+    return 0;
 }
 
-void stdio(char *str) {
-    int64_t index = 0;
-    while (str[index] != '\0'){
-        tty_put_char(str[index]);
-        index++;
+int strcmp(const char *a, const char *b) {
+    while (*a && (*a == *b)) {
+        a++;
+        b++;
     }
+    return *(unsigned char*)a - *(unsigned char*)b;
+}
+
+
+void command_eval(){
+    if (strcmp(CommandContext.command, "ping") == 0){
+        char *str = "pong";
+        serial_write_str(str);
+    } else {
+        serial_write_str("Invalid command");
+    }
+
+    CommandContext = (Command){0};
 }
