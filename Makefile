@@ -41,6 +41,8 @@ override LDFLAGS += \
     --gc-sections \
     -T linker.lds
 
+# Virt flags
+QEMU_FLAGS := -m 128M -cdrom $(BUILD_DIR)/side-hOS.iso -serial stdio -smp 2
 
 # Default target. This must come first, before header dependencies.
 .PHONY: all
@@ -67,9 +69,9 @@ iso: all
 
 .PHONY: boot
 boot: iso
-	qemu-system-x86_64 -cdrom $(BUILD_DIR)/side-hOS.iso
+	qemu-system-x86_64 $(QEMU_FLAGS)
 
 .PHONY: debug
 debug: iso
-	qemu-system-x86_64 -cdrom $(BUILD_DIR)/side-hOS.iso \
+	qemu-system-x86_64 $(QEMU_FLAGS) \
         -S -s
