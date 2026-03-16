@@ -8,6 +8,20 @@
 
 #include "serial.h"
 
+
+#define SIZE_4KB 0x1000
+
+// Paging flags, flags for all levels are combined
+#define PAGING_NO_EXECUTE 63
+
+// paging masks used to extract pml4, pdpt, pd, pt
+// and physical frame offset from virtual addr
+#define PAGING_OFFSET_MASK 0xFFF
+#define PAGING_PT_MASK 0x1FF << 12
+#define PAGING_PD_MASK 0x1FF << 21
+#define PAGING_PDPT_MASK 0x1FF << 30
+#define PAGING_PML4_MASK 0x1FF << 39
+
 #define DEFAULT_COLOR_SCHEME ((ColorScheme){ .fg = 0xFFFFFFFF, .bg = 0xFF })
 #define DEFAULT_CURSOR ((TTYPoint){.x = 0, .y = 0})
 
@@ -15,6 +29,10 @@ char* kstdin();
 void kstdout(char* str);
 void kshell();
 static void halt(void);
+uint64_t virtual_to_physical(uint64_t);
+uint64_t physical_to_virtual(uint64_t);
+uint64_t alloc_frame();
+uint64_t memory_nth_segment(Segment seg, uint64_t n);
 
 
 typedef struct {
