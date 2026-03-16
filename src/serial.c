@@ -35,3 +35,36 @@ void serial_write_str(char *s)
         serial_write(s[index++]);
     }
 }
+
+void serial_read_str(char *buffer)
+{
+    size_t index = 0;
+    const size_t max_len = 255;
+
+    while (1) {
+        uint8_t character = serial_read();
+
+        if (character == '\r' || character == '\n') {
+            serial_write('\r');
+            serial_write('\n');
+            break;
+        }
+
+        if ((character == '\b' || character == 127) && index > 0) {
+            serial_write('\b');
+            serial_write(' ');
+            serial_write('\b');
+            index--;
+            buffer[index] = '\0';
+            continue;
+        }
+
+        if (index < max_len) {
+            serial_write(character);
+            buffer[index++] = (char)character;
+            buffer[index] = '\0';
+        }
+    }
+
+    buffer[index] = '\0';
+}

@@ -1,5 +1,4 @@
 #include "kernel.h"
-#include "serial.h"
 
 // LIMINE Boot Protocol Specification: https://codeberg.org/Limine/limine-protocol/src/branch/trunk/PROTOCOL.md
 // See linker script for how these are placed in the binary - ../linker.lds
@@ -59,7 +58,17 @@ typedef struct {
     int8_t cursor;
 } Command;
 
+static FreeList FreeListContext = {0};
 static Command CommandContext = {0};
+
+static inline void init_hardware(void) {
+    serial_init();
+}
+
+static inline uint64_t next_4kb(uint64_t addr) {
+    const uint64_t page_mask = 0xFFF;
+    return (addr + page_mask) & ~page_mask;
+}
 
 void kmain(void) {
     // Ensure the bootloader actually understands our base revision
@@ -67,65 +76,52 @@ void kmain(void) {
         halt();
     }
 
-    // env.cursor = DEFAULT_CURSOR;
-    // env.color_scheme = DEFAULT_COLOR_SCHEME;
-    // env.width = 80;
-    // env.height = 25;
-    // env.buffer[0][0].character = (uint8_t)'>';
-    // env.cursor = (TTYPoint){
-    //     .x = 1,
-    //     .y = 0
-    // };
-
-    // Ensure we got a framebuffer.
-    // if (framebuffer_request.response == NULL
-    //     || framebuffer_request.response->framebuffer_count < 1) {
-    //     halt();
-    // }
-    // env.framebuffer = framebuffer_request.response->framebuffers[0];
-
-    // Ensure we got the memmap response
+    // get all memory segments
     if (memmap_request.response == NULL
         || memmap_request.response->entry_count <= 0) {
         halt();
     }
+    // get usable memory segments
+    uint64_t entry_count = memmap_request.response->entry_count;
+    for (uint64_t i = 0; i < entry_count; i++){
+        struct limine_memmap_entry entry = *memmap_request.response->entries[i];
+        if (entry.type == LIMINE_MEMMAP_USABLE){
+            uint64_t aligned_start = (entry.base + 0xfff) & ~0xfff;
+            uint64_t segment_end = entry.base + entry.length - 1;
+            uint64_t aligned_end = (segment_end + 0xfff) & ~0xfff;
+            if (aligned_start != aligned_end){
+                FreeListContext.segments[FreeListContext.cursor] = (Segment){
+                    .base = aligned_start,
+                    .length = (aligned_end - aligned_start) >> 12
+                };
+                FreeListContext.cursor++;
+            }
+        }
+    }
 
+    // 4 level paging
     if (paging_request.response == NULL){
         halt();
     }
 
+    // make life easy by linear mapping with an offset
     if (hhdm_reqest.response == NULL){
         halt();
     }
 
-    serial_init();
+    // SETUP PAGING STRUCTURES
+    // Using HHDM mapping physical pages that are 4kb aligned
+
+
+    init_hardware();
+
+    kstdout("Hello, World\n");
+
     while (1){
-        serial_write('>');
-waitForInput:
-        while(!serial_received());
-        while (serial_received()){
-            uint8_t character = serial_read();
-            if (character == 0x08 || character == 0x7F) {   // backspace
-                serial_write('\b');
-                serial_write(' ');
-                serial_write('\b');
-                CommandContext.cursor--;
-                CommandContext.command[CommandContext.cursor] = '\0';
-            } else if (character == '\r' || character == '\n') {
-                serial_write('\r');
-                serial_write('\n');
-                command_eval();
-                serial_write('\r');
-                serial_write('\n');
-                serial_write('>');
-            } else {
-                serial_write(character);
-                CommandContext.command[CommandContext.cursor] = character;
-                CommandContext.cursor++;
-                CommandContext.command[CommandContext.cursor] = '\0';
-            }
-            goto waitForInput;
-        }
+        kstdout(">");
+        kstdin();
+        kshell();
+        kstdout("\r\n");
     }
 
     // TODO
@@ -134,74 +130,22 @@ waitForInput:
     halt();
 }
 
-// GCC wants these 4 functions, ignore the squigglies in vscode
-void *memcpy(void *restrict dest, const void *restrict src, size_t n) {
-    uint8_t *restrict pdest = (uint8_t *restrict)dest;
-    const uint8_t *restrict psrc = (const uint8_t *restrict)src;
-
-    for (size_t i = 0; i < n; i++) {
-        pdest[i] = psrc[i];
-    }
-
-    return dest;
-}
-
-void *memset(void *s, int c, size_t n) {
-    uint8_t *p = (uint8_t *)s;
-
-    for (size_t i = 0; i < n; i++) {
-        p[i] = (uint8_t)c;
-    }
-
-    return s;
-}
-
-void *memmove(void *dest, const void *src, size_t n) {
-    uint8_t *pdest = (uint8_t *)dest;
-    const uint8_t *psrc = (const uint8_t *)src;
-
-    if ((uintptr_t)src > (uintptr_t)dest) {
-        for (size_t i = 0; i < n; i++) {
-            pdest[i] = psrc[i];
-        }
-    } else if ((uintptr_t)src < (uintptr_t)dest) {
-        for (size_t i = n; i > 0; i--) {
-            pdest[i-1] = psrc[i-1];
-        }
-    }
-
-    return dest;
-}
-
-int memcmp(const void *s1, const void *s2, size_t n) {
-    const uint8_t *p1 = (const uint8_t *)s1;
-    const uint8_t *p2 = (const uint8_t *)s2;
-
-    for (size_t i = 0; i < n; i++) {
-        if (p1[i] != p2[i]) {
-            return p1[i] < p2[i] ? -1 : 1;
-        }
-    }
-
-    return 0;
-}
-
-int strcmp(const char *a, const char *b) {
-    while (*a && (*a == *b)) {
-        a++;
-        b++;
-    }
-    return *(unsigned char*)a - *(unsigned char*)b;
-}
-
-
-void command_eval(){
+void kshell(){
     if (strcmp(CommandContext.command, "ping") == 0){
         char *str = "pong";
-        serial_write_str(str);
+        kstdout(str);
     } else {
-        serial_write_str("Invalid command");
+        kstdout("Invalid command");
     }
 
     CommandContext = (Command){0};
+}
+
+void kstdout(char* str){
+    serial_write_str(str);
+}
+
+char* kstdin(){
+    serial_read_str(CommandContext.command);
+    return CommandContext.command;
 }

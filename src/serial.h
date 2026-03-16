@@ -2,6 +2,7 @@
 #define SERIAL_H
 
 #include <stdint.h>
+#include <stddef.h>
 
 #define COM1 0x3F8
 
@@ -14,5 +15,6 @@ int serial_received();
 void serial_write(uint8_t c);
 uint8_t serial_read();
 void serial_write_str(char*);
+void serial_read_str(char *buffer);
 
 #endif
