@@ -54,7 +54,7 @@ static void halt(void) {
 // static TTYEnvironment env = {0};
 
 typedef struct {
-    char command[256];
+    char command[UINT8_MAX];
     int8_t cursor;
 } Command;
 
@@ -62,6 +62,7 @@ static FreeList FreeListContext = {0}; // stores physical addr
 static Command CommandContext = {0};
 static uint64_t HHDM_OFFSET = {0};
 static uint64_t PML4[512] __attribute__((aligned(4096))) = {0};
+static uint64_t frame;
 
 static inline void init_hardware(void) {
     serial_init();
@@ -127,9 +128,18 @@ void kshell(){
         char *str = "pong";
         kstdout(str);
     } else if(strcmp(CommandContext.command, "alloc") == 0){
-        uint64_t frame = alloc_frame();
+        frame = alloc_frame();
         puthex(frame);
         kstdout("\r\n");
+    } else if(strcmp(CommandContext.command, "free") == 0){
+        bool status = free_frame(frame);
+        puthex(frame);
+        kstdout("\n");
+        if (status){
+            kstdout("freed\n");
+        } else {
+            kstdout("error\n");
+        }
     } else if(strcmp(CommandContext.command, "freelist") == 0){
         kstdout("cursor=");
         puthex(FreeListContext.cursor);
@@ -205,7 +215,7 @@ uint64_t alloc_frame()
             uint64_t frame = memory_nth_segment(segment, segment->length - 1);
             segment->length--;
             // zero out
-            memset(physical_to_virtual(frame), 0, 4096);
+            memset(physical_to_virtual(frame), 0, SIZE_4KB);
             return frame;
         }
         segment_cursor++;
@@ -214,7 +224,46 @@ uint64_t alloc_frame()
     return 0;
 }
 
+bool free_frame(uint64_t physical)
+{
+    uint8_t segment_cursor = 0;
+    while (segment_cursor < FreeListContext.cursor){
+        Segment *segment = &FreeListContext.segments[segment_cursor];
+        // end adjacent
+        if ((segment->base + segment->length * SIZE_4KB) == physical){
+            segment->length++;
+            return true;
+        }
+        // start adjacent
+        if (physical + SIZE_4KB == segment->base){
+            segment->length++;
+            segment->base = physical;
+            return true;
+        }
+        segment_cursor++;
+    }
+    if (FreeListContext.cursor == UINT8_MAX){
+        return false;
+    }
+    // new segment
+    FreeListContext.segments[FreeListContext.cursor] = (Segment){
+        .base = physical,
+        .length = 1
+    };
+    FreeListContext.cursor++;
+    return true;
+}
+
 uint64_t memory_nth_segment(Segment *seg, uint64_t n)
 {
     return seg->base + (SIZE_4KB * n);
+}
+
+uint64_t* kmalloc(uint64_t size)
+{
+    return NULL;
+}
+
+bool kfree(uint64_t){
+    return false;
 }

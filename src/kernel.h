@@ -63,7 +63,11 @@ static void halt(void);
 uint64_t virtual_to_physical(uint64_t);
 uint64_t* physical_to_virtual(uint64_t);
 uint64_t alloc_frame();
+bool free_frame(uint64_t physical);
 uint64_t memory_nth_segment(Segment *seg, uint64_t n);
+uint64_t* kmalloc(uint64_t size);
+bool kfree(uint64_t);
+
 
 uint8_t inb(uint16_t port) {
     uint8_t ret;
