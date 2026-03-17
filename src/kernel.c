@@ -58,10 +58,9 @@ typedef struct {
     int8_t cursor;
 } Command;
 
-static FreeList FreeListContext = {0}; // stores physical addr
+static MemoryContext Memory = {0};
 static Command CommandContext = {0};
 static uint64_t HHDM_OFFSET = {0};
-static uint64_t PML4[512] __attribute__((aligned(4096))) = {0};
 static uint64_t frame;
 
 static inline void init_hardware(void) {
@@ -88,11 +87,14 @@ void kmain(void) {
             uint64_t segment_end = entry.base + entry.length - 1;
             uint64_t aligned_end = (segment_end + 0xfff) & ~0xfff;
             if (aligned_start != aligned_end){
-                FreeListContext.segments[FreeListContext.cursor] = (Segment){
+                Segment *segments = Memory.freelist.segments;
+                int8_t *cursor = &Memory.freelist.cursor;
+                segments[*cursor] = (Segment){
                     .base = aligned_start,
                     .length = (aligned_end - aligned_start) >> 12
                 };
-                FreeListContext.cursor++;
+                // TODO - handle overflow
+                (*cursor)++;
             }
         }
     }
@@ -142,16 +144,18 @@ void kshell(){
         }
     } else if(strcmp(CommandContext.command, "freelist") == 0){
         kstdout("cursor=");
-        puthex(FreeListContext.cursor);
+        uint8_t *cursor = &Memory.freelist.cursor;
+        puthex(*cursor);
         kstdout("\r\n");
 
-        for (int i = 0; i < FreeListContext.cursor; i++){
+        Segment *segments = Memory.freelist.segments;
+        for (int i = 0; i < *cursor; i++){
             kstdout("seg ");
             puthex(i);
             kstdout(" base=");
-            puthex(FreeListContext.segments[i].base);
+            puthex(segments[i].base);
             kstdout(" len=");
-            puthex(FreeListContext.segments[i].length);
+            puthex(segments[i].length);
             kstdout("\r\n");
         }
     } else if(strcmp(CommandContext.command, "hhdm") == 0){
@@ -209,8 +213,8 @@ uint64_t* physical_to_virtual(uint64_t physical){
 uint64_t alloc_frame()
 {
     uint8_t segment_cursor = 0;
-    while (segment_cursor < FreeListContext.cursor){
-        Segment *segment = &FreeListContext.segments[segment_cursor];
+    while (segment_cursor < Memory.freelist.cursor){
+        Segment *segment = &Memory.freelist.segments[segment_cursor];
         if (segment->length > 0){
             uint64_t frame = memory_nth_segment(segment, segment->length - 1);
             segment->length--;
@@ -227,8 +231,9 @@ uint64_t alloc_frame()
 bool free_frame(uint64_t physical)
 {
     uint8_t segment_cursor = 0;
-    while (segment_cursor < FreeListContext.cursor){
-        Segment *segment = &FreeListContext.segments[segment_cursor];
+    uint8_t *cursor = &Memory.freelist.cursor;
+    while (segment_cursor < *cursor){
+        Segment *segment = &Memory.freelist.segments[segment_cursor];
         // end adjacent
         if ((segment->base + segment->length * SIZE_4KB) == physical){
             segment->length++;
@@ -242,15 +247,16 @@ bool free_frame(uint64_t physical)
         }
         segment_cursor++;
     }
-    if (FreeListContext.cursor == UINT8_MAX){
+    if (*cursor == UINT8_MAX){
         return false;
     }
     // new segment
-    FreeListContext.segments[FreeListContext.cursor] = (Segment){
+    Segment *segments = Memory.freelist.segments;
+    segments[*cursor] = (Segment){
         .base = physical,
         .length = 1
     };
-    FreeListContext.cursor++;
+    *cursor++;
     return true;
 }
 

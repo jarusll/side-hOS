@@ -51,9 +51,14 @@ typedef struct {
 } Segment;
 
 typedef struct {
-    Segment segments[256];
+    Segment segments[255];
     int8_t cursor;
 } FreeList;
+
+typedef struct {
+    FreeList freelist;
+    uint64_t frame;
+} MemoryContext;
 
 char* kstdin();
 void kstdout(char* str);
