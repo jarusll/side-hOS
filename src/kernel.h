@@ -12,7 +12,18 @@
 #define SIZE_4KB 0x1000
 
 // Paging flags, flags for all levels are combined
-#define PAGING_NO_EXECUTE 63
+#define PAGING_PRESENT_FLAG 0
+#define PAGING_READ_WRITE_FLAG 1
+#define PAGING_USER_SUPERVISOR_FLAG 2
+#define PAGING_PAGE_LEVEL_WRITE_THROUGH_FLAG 3
+#define PAGING_PAGE_LEVEL_CACHE_DISABLE_FLAG 4
+#define PAGING_ACCESSED_FLAG 5
+#define PAGING_DIRTY_FLAG 6
+#define PAGING_PAGE_SIZE_FLAG 7
+#define PAGING_GLOBAL_PAGE_FLAG 8
+#define PAGING_AVAILABLE_FLAG 0xe00 // 11:9
+
+#define PAGING_NO_EXECUTE_FLAG 63
 
 // paging masks used to extract pml4, pdpt, pd, pt
 // and physical frame offset from virtual addr
@@ -22,18 +33,17 @@
 #define PAGING_PDPT_MASK 0x1FF << 30
 #define PAGING_PML4_MASK 0x1FF << 39
 
+// shifts
+#define PAGING_OFFSET_SHIFT 0
+#define PAGING_PT_SHIFT 12
+#define PAGING_PD_SHIFT 21
+#define PAGING_PDPT_SHIFT 30
+#define PAGING_PML4_SHIFT 39
+
+#define PAGING_NEXT_BASE_ADDRESS_MASK 0x000FFFFFFFFFF000ULL
+
 #define DEFAULT_COLOR_SCHEME ((ColorScheme){ .fg = 0xFFFFFFFF, .bg = 0xFF })
 #define DEFAULT_CURSOR ((TTYPoint){.x = 0, .y = 0})
-
-char* kstdin();
-void kstdout(char* str);
-void kshell();
-static void halt(void);
-uint64_t virtual_to_physical(uint64_t);
-uint64_t physical_to_virtual(uint64_t);
-uint64_t alloc_frame();
-uint64_t memory_nth_segment(Segment seg, uint64_t n);
-
 
 typedef struct {
     uint64_t base;
@@ -44,6 +54,16 @@ typedef struct {
     Segment segments[256];
     int8_t cursor;
 } FreeList;
+
+char* kstdin();
+void kstdout(char* str);
+void puthex(uint64_t value);
+void kshell();
+static void halt(void);
+uint64_t virtual_to_physical(uint64_t);
+uint64_t* physical_to_virtual(uint64_t);
+uint64_t alloc_frame();
+uint64_t memory_nth_segment(Segment *seg, uint64_t n);
 
 uint8_t inb(uint16_t port) {
     uint8_t ret;
