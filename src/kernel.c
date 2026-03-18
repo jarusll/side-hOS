@@ -217,9 +217,19 @@ uint64_t alloc_frame()
         Segment *segment = &Memory.freelist.segments[segment_cursor];
         if (segment->length > 0){
             uint64_t frame = memory_nth_segment(segment, segment->length - 1);
+            uint64_t *frame_pointer = physical_to_virtual(frame);
             segment->length--;
+
             // zero out
-            memset(physical_to_virtual(frame), 0, SIZE_4KB);
+            memset(frame_pointer, 0, SIZE_4KB);
+
+            HeapNode *node = (HeapNode*)physical_to_virtual(frame);
+            node->base = (uint64_t)((uint8_t*)frame_pointer + sizeof(HeapNode));
+            node->length = SIZE_4KB - sizeof(HeapNode);
+
+            node->next = Memory.heaplist;
+            Memory.heaplist = node;
+
             return frame;
         }
         segment_cursor++;
@@ -267,9 +277,69 @@ uint64_t memory_nth_segment(Segment *seg, uint64_t n)
 
 uint64_t* kmalloc(uint64_t size)
 {
-    return NULL;
+    if (size > (SIZE_4KB - sizeof(HeapNode) - sizeof(uint64_t))) {
+        return 0;
+    }
+
+    HeapNode *heap_node = Memory.heaplist;
+    uint64_t total_size = size + sizeof(uint64_t);
+
+    do {
+
+    } while(1);
+
+    if (heap_node == NULL){
+        heap_node = (HeapNode*)alloc_frame();
+    }
+
+    if (heap_node->length > total_size){
+        uint64_t *alloc_base = physical_to_virtual(heap_node->base);
+        heap_node->length -= size + sizeof(uint64_t);
+        uint64_t *return_base = (uint64_t*)((uint8_t*)alloc_base + sizeof(uint64_t));
+        return return_base;
+    }
+
+    return 0;
 }
 
-bool kfree(uint64_t){
+bool kfree(uint64_t *address){
+    uint64_t *virtual_frame = pointer_frame(address);
+    uint64_t physical_frame = virtual_to_physical(virtual_frame);
+
+    uint64_t *allocated_pointer = pointer_sub(address, sizeof(uint64_t));
+    uint64_t size = *allocated_pointer;
+    uint64_t total_size = size + sizeof(size);
+
+    // walk the node and find the address node
+    uint64_t *prev, *next;
+    HeapNode *node = (HeapNode*)allocated_pointer;
+    prev = NULL;
+    next = node->next;
+    while (node != allocated_pointer){
+        prev = node;
+        node = node->next;
+        if (node->next){
+            next = node->next;
+        } else {
+            next = NULL;
+        }
+    }
+
+    if (node != allocated_pointer){
+        return 0;
+    }
+
+    if (prev){
+        ((HeapNode*)prev)->next = next;
+    } else {
+
+    }
+}
+
+bool heapnode_is_empty(HeapNode *node)
+{
+    if (node->length == SIZE_4KB - sizeof(HeapNode)){
+        return true;
+    }
     return false;
 }

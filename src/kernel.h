@@ -45,19 +45,29 @@
 #define DEFAULT_COLOR_SCHEME ((ColorScheme){ .fg = 0xFFFFFFFF, .bg = 0xFF })
 #define DEFAULT_CURSOR ((TTYPoint){.x = 0, .y = 0})
 
-typedef struct {
+typedef struct _Segment {
     uint64_t base;
     uint64_t length;
 } Segment;
 
-typedef struct {
+typedef struct _FreeList {
     Segment segments[255];
     int8_t cursor;
 } FreeList;
 
-typedef struct {
+typedef struct _HeapNode {
+    int64_t length;
+    struct _HeapNode *next;
+} HeapNode;
+
+typedef struct HeapPage {
+    uint64_t base;
+    HeapNode *freelist;
+};
+
+typedef struct _MemoryContext {
     FreeList freelist;
-    uint64_t frame;
+    HeapNode *heaplist;
 } MemoryContext;
 
 char* kstdin();
@@ -71,11 +81,11 @@ uint64_t alloc_frame();
 bool free_frame(uint64_t physical);
 uint64_t memory_nth_segment(Segment *seg, uint64_t n);
 uint64_t* kmalloc(uint64_t size);
-bool kfree(uint64_t);
+bool kfree(uint64_t*);
+bool heapnode_is_empty(HeapNode *node);
 
 
-uint8_t inb(uint16_t port) {
-    uint8_t ret;
+uint8_t inb(uint16_t port) { uint8_t ret;
     asm volatile ("inb %1, %0"
                     : "=a"(ret)
                     : "Nd"(port));
@@ -144,6 +154,18 @@ int strcmp(const char *a, const char *b) {
         b++;
     }
     return *(unsigned char*)a - *(unsigned char*)b;
+}
+
+static inline void* pointer_add(void* base, size_t n){
+    return (void*)((uint8_t*)base + n);
+}
+
+static inline void* pointer_sub(void* base, size_t n){
+    return (void*)((uint8_t*)base - n);
+}
+
+static inline void* pointer_frame(void *address){
+    return (void*)((uint64_t)address & ~(uint64_t)0xFFF);
 }
 
 #endif
