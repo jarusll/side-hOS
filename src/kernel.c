@@ -216,21 +216,26 @@ uint64_t alloc_frame()
     while (segment_cursor < Memory.freelist.cursor){
         Segment *segment = &Memory.freelist.segments[segment_cursor];
         if (segment->length > 0){
-            uint64_t frame = memory_nth_segment(segment, segment->length - 1);
-            uint64_t *frame_pointer = physical_to_virtual(frame);
+            uint64_t frame_physical = memory_nth_segment(segment, segment->length - 1);
+            uint64_t *frame_pointer = physical_to_virtual(frame_physical);
             segment->length--;
 
             // zero out
             memset(frame_pointer, 0, SIZE_4KB);
 
-            HeapNode *node = (HeapNode*)physical_to_virtual(frame);
-            node->base = (uint64_t)((uint8_t*)frame_pointer + sizeof(HeapNode));
-            node->length = SIZE_4KB - sizeof(HeapNode);
+            uint64_t free_size = SIZE_4KB - sizeof(HeapPage) - sizeof(HeapNode);
+            HeapNode *node = (HeapNode*)(pointer(frame_pointer) + sizeof(HeapPage));
+            node->length = free_size;
+            node->next = NULL;
 
-            node->next = Memory.heaplist;
-            Memory.heaplist = node;
+            HeapPage *page = (HeapPage*)frame_pointer;
+            page->freelist = node;
+            page->largest = free_size;
 
-            return frame;
+            page->next = Memory.heap_pages;
+            Memory.heap_pages = page;
+
+            return frame_physical;
         }
         segment_cursor++;
     }
@@ -277,64 +282,107 @@ uint64_t memory_nth_segment(Segment *seg, uint64_t n)
 
 uint64_t* kmalloc(uint64_t size)
 {
-    if (size > (SIZE_4KB - sizeof(HeapNode) - sizeof(uint64_t))) {
+    // ignore multi frame allocs
+    if (size > SMALL_PAGE_MAXIMUM_SIZE) {
         return 0;
     }
 
-    HeapNode *heap_node = Memory.heaplist;
     uint64_t total_size = size + sizeof(uint64_t);
-
-    do {
-
-    } while(1);
-
-    if (heap_node == NULL){
-        heap_node = (HeapNode*)alloc_frame();
+    HeapPage *page = Memory.heap_pages;
+    while (page && page->largest < total_size){
+        page = page->next;
     }
 
-    if (heap_node->length > total_size){
-        uint64_t *alloc_base = physical_to_virtual(heap_node->base);
-        heap_node->length -= size + sizeof(uint64_t);
-        uint64_t *return_base = (uint64_t*)((uint8_t*)alloc_base + sizeof(uint64_t));
-        return return_base;
+    if (page == NULL){
+        uint64_t new_physical_frame = alloc_frame();
+        page = (HeapPage*)physical_to_virtual(new_physical_frame);
     }
 
-    return 0;
-}
-
-bool kfree(uint64_t *address){
-    uint64_t *virtual_frame = pointer_frame(address);
-    uint64_t physical_frame = virtual_to_physical(virtual_frame);
-
-    uint64_t *allocated_pointer = pointer_sub(address, sizeof(uint64_t));
-    uint64_t size = *allocated_pointer;
-    uint64_t total_size = size + sizeof(size);
-
-    // walk the node and find the address node
-    uint64_t *prev, *next;
-    HeapNode *node = (HeapNode*)allocated_pointer;
+    // search for free heap space
+    HeapNode *node = page->freelist;
+    HeapNode *prev, *next;
     prev = NULL;
-    next = node->next;
-    while (node != allocated_pointer){
+    while (node && node->length < total_size){
         prev = node;
         node = node->next;
-        if (node->next){
-            next = node->next;
+    }
+
+    if (!node){
+        return 0;
+    }
+    next = node->next;
+
+    uint64_t *base = (uint64_t*)pointer(node);
+    *base = size;
+    uint64_t *return_base = (uint64_t*)(pointer(node) + sizeof(uint64_t));
+    uint64_t *new_next = (uint64_t*)(pointer(node) + total_size);
+    uint64_t remaining_size = node->length - total_size;
+
+    if (remaining_size >= sizeof(HeapNode)){
+        // split and create a new free node
+        HeapNode *new_node = (HeapNode*)new_next;
+        new_node->length = remaining_size;
+        new_node->next = next;
+        if (prev){
+            prev->next = new_node;
         } else {
-            next = NULL;
+            page->freelist = new_node;
+        }
+    } else {
+        // truncate
+        if (prev){
+            prev->next = next;
+        } else {
+            page->freelist = next;
         }
     }
 
-    if (node != allocated_pointer){
-        return 0;
+    HeapNode *cursor = page->freelist;
+    uint64_t max_size = 0;
+    while(cursor){
+        if (cursor->length > max_size){
+            max_size = cursor->length;
+        }
+        cursor = cursor->next;
     }
+    page->largest = max_size;
 
-    if (prev){
-        ((HeapNode*)prev)->next = next;
-    } else {
-
-    }
+    return return_base;
 }
+
+// bool kfree(uint64_t *address){
+//     uint64_t *virtual_frame = pointer_frame(address);
+//     uint64_t physical_frame = virtual_to_physical(virtual_frame);
+
+//     uint64_t *allocated_pointer = (uint64_t*)(pointer(address) - sizeof(uint64_t));
+//     uint64_t size = *allocated_pointer;
+//     uint64_t total_size = size + sizeof(size);
+
+//     // walk the node and find the address node
+//     uint64_t *prev, *next;
+//     HeapNode *node = (HeapNode*)allocated_pointer;
+//     prev = NULL;
+//     next = node->next;
+//     while (node != allocated_pointer){
+//         prev = node;
+//         node = node->next;
+//         if (node->next){
+//             next = node->next;
+//         } else {
+//             next = NULL;
+//         }
+//     }
+
+//     if (node != allocated_pointer){
+//         return 0;
+//     }
+
+//     if (prev){
+//         ((HeapNode*)prev)->next = next;
+//     } else {
+
+//     }
+// }
 
 bool heapnode_is_empty(HeapNode *node)
 {

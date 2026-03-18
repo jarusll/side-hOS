@@ -45,29 +45,33 @@
 #define DEFAULT_COLOR_SCHEME ((ColorScheme){ .fg = 0xFFFFFFFF, .bg = 0xFF })
 #define DEFAULT_CURSOR ((TTYPoint){.x = 0, .y = 0})
 
-typedef struct _Segment {
+typedef struct Segment {
     uint64_t base;
     uint64_t length;
 } Segment;
 
-typedef struct _FreeList {
+typedef struct FreeList {
     Segment segments[255];
     int8_t cursor;
 } FreeList;
 
-typedef struct _HeapNode {
+typedef struct HeapNode {
     int64_t length;
     struct _HeapNode *next;
 } HeapNode;
 
 typedef struct HeapPage {
-    uint64_t base;
     HeapNode *freelist;
-};
+    uint64_t largest;
+    struct HeapPage *next;
+} HeapPage;
 
-typedef struct _MemoryContext {
+// because each physical frame contains HeapPage, HeapNode & u64
+#define SMALL_PAGE_MAXIMUM_SIZE SIZE_4KB - sizeof(HeapPage) - sizeof(HeapNode) - sizeof(uint64_t)
+
+typedef struct MemoryContext {
     FreeList freelist;
-    HeapNode *heaplist;
+    HeapPage *heap_pages;
 } MemoryContext;
 
 char* kstdin();
@@ -154,6 +158,10 @@ int strcmp(const char *a, const char *b) {
         b++;
     }
     return *(unsigned char*)a - *(unsigned char*)b;
+}
+
+static inline uint8_t* pointer(void *ptr){
+    return (uint8_t*)ptr;
 }
 
 static inline void* pointer_add(void* base, size_t n){
