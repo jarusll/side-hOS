@@ -62,6 +62,7 @@ static MemoryContext Memory = {0};
 static Command CommandContext = {0};
 static uint64_t HHDM_OFFSET = {0};
 static uint64_t frame;
+static uint64_t last = {0};
 
 static inline void init_hardware(void) {
     serial_init();
@@ -126,9 +127,15 @@ void kmain(void) {
 }
 
 void kshell(){
+    static uint64_t i = 1;
     if (strcmp(CommandContext.command, "ping") == 0){
         char *str = "pong";
         kstdout(str);
+    } else if(strcmp(CommandContext.command, "malloc") == 0){
+        uint64_t* addr = kmalloc(i * 10);
+        puthex(i);
+        kstdout("\r\n");
+        i++;
     } else if(strcmp(CommandContext.command, "alloc") == 0){
         frame = alloc_frame();
         puthex(frame);
@@ -202,8 +209,8 @@ char* kstdin(){
     return CommandContext.command;
 }
 
-uint64_t virtual_to_physical(uint64_t virtual){
-    return virtual - HHDM_OFFSET;
+uint64_t virtual_to_physical(uint64_t *virtual){
+    return (uint64_t)virtual - HHDM_OFFSET;
 }
 
 uint64_t* physical_to_virtual(uint64_t physical){

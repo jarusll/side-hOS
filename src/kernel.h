@@ -57,7 +57,7 @@ typedef struct FreeList {
 
 typedef struct HeapNode {
     int64_t length;
-    struct _HeapNode *next;
+    struct HeapNode *next;
 } HeapNode;
 
 typedef struct HeapPage {
@@ -79,7 +79,7 @@ void kstdout(char* str);
 void puthex(uint64_t value);
 void kshell();
 static void halt(void);
-uint64_t virtual_to_physical(uint64_t);
+uint64_t virtual_to_physical(uint64_t*);
 uint64_t* physical_to_virtual(uint64_t);
 uint64_t alloc_frame();
 bool free_frame(uint64_t physical);
