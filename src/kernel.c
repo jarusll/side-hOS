@@ -61,8 +61,27 @@ typedef struct {
 static MemoryContext Memory = {0};
 static Command CommandContext = {0};
 static uint64_t HHDM_OFFSET = {0};
+static PointerList PointerStore = {0};
 static uint64_t frame;
 static uint64_t last = {0};
+
+static bool pointer_push(PointerList *list, uint64_t *ptr)
+{
+    if (list->cursor == UINT8_MAX){
+        return false;
+    }
+    list->entries[list->cursor++] = ptr;
+    return true;
+}
+
+static uint64_t* pointer_pop(PointerList *list)
+{
+    if (list->cursor == 0){
+        return NULL;
+    }
+    list->cursor--;
+    return list->entries[list->cursor];
+}
 
 static inline void init_hardware(void) {
     serial_init();
@@ -127,20 +146,42 @@ void kmain(void) {
 }
 
 void kshell(){
-    static uint64_t i = 1;
     if (strcmp(CommandContext.command, "ping") == 0){
         char *str = "pong";
         kstdout(str);
     } else if(strcmp(CommandContext.command, "malloc") == 0){
-        uint64_t* addr = kmalloc(i * 10);
-        puthex(i);
+        uint64_t size = 1000;
+        uint64_t *addr = kmalloc(size);
+        kstdout("malloc size=");
+        puthex(size);
+        kstdout(" addr=");
+        puthex((uint64_t)addr);
         kstdout("\r\n");
-        i++;
+
+        if (addr){
+            if (!pointer_push(&PointerStore, addr)){
+                kstdout("pointer list full\r\n");
+            } else {
+                kstdout("malloc success\r\n");
+            }
+        } else {
+            kstdout("malloc failed\r\n");
+        }
     } else if(strcmp(CommandContext.command, "alloc") == 0){
         frame = alloc_frame();
         puthex(frame);
         kstdout("\r\n");
     } else if(strcmp(CommandContext.command, "free") == 0){
+        uint64_t *addr = pointer_pop(&PointerStore);
+        if (!addr){
+            kstdout("no alloc to free\r\n");
+        } else {
+            bool status = kfree(addr);
+            kstdout("free addr=");
+            puthex((uint64_t)addr);
+            kstdout(status ? " ok\r\n" : " fail\r\n");
+        }
+    } else if(strcmp(CommandContext.command, "freeframe") == 0){
         bool status = free_frame(frame);
         puthex(frame);
         kstdout("\n");
@@ -169,6 +210,40 @@ void kshell(){
         kstdout("hhdm=");
         puthex(HHDM_OFFSET);
         kstdout("\r\n");
+    } else if(strcmp(CommandContext.command, "heapdump") == 0){
+        HeapPage *page = Memory.heap_pages;
+        if (!page){
+            kstdout("no heap pages\r\n");
+        }
+
+        uint64_t page_index = 0;
+        while (page){
+            kstdout("page ");
+            puthex(page_index);
+            kstdout(" base=");
+            puthex((uint64_t)page);
+            kstdout(" largest=");
+            puthex(page->largest);
+            kstdout("\r\n");
+
+            HeapNode *node = page->freelist;
+            uint64_t node_index = 0;
+            while (node){
+                kstdout("  node ");
+                puthex(node_index);
+                kstdout(" len=");
+                puthex(node->length);
+                kstdout(" next=");
+                puthex((uint64_t)node->next);
+                kstdout("\r\n");
+
+                node = node->next;
+                node_index++;
+            }
+
+            page = page->next;
+            page_index++;
+        }
     } else {
         kstdout("Invalid command");
     }
@@ -300,7 +375,7 @@ uint64_t* kmalloc(uint64_t size)
         page = page->next;
     }
 
-    if (page == NULL){
+    if (page == NULL || page->largest < total_size){
         uint64_t new_physical_frame = alloc_frame();
         page = (HeapPage*)physical_to_virtual(new_physical_frame);
     }
@@ -335,7 +410,7 @@ uint64_t* kmalloc(uint64_t size)
     } else {
         // split and create a new free node
         HeapNode *new_node = (HeapNode*)new_next;
-        new_node->length = remaining_size;
+        new_node->length = remaining_size - sizeof(HeapNode);
         new_node->next = next;
         replacement = new_node;
     }
@@ -346,6 +421,7 @@ uint64_t* kmalloc(uint64_t size)
         page->freelist = replacement;
     }
 
+    // update max_size for heap page
     HeapNode *cursor = page->freelist;
     uint64_t max_size = 0;
     while(cursor){

@@ -50,6 +50,11 @@ typedef struct Segment {
     uint64_t length;
 } Segment;
 
+typedef struct PointerList {
+    uint64_t *entries[UINT8_MAX];
+    uint8_t cursor;
+} PointerList;
+
 typedef struct FreeList {
     Segment segments[255];
     int8_t cursor;
