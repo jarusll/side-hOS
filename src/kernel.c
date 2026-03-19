@@ -319,29 +319,29 @@ uint64_t* kmalloc(uint64_t size)
     }
     next = node->next;
 
-    uint64_t *base = (uint64_t*)pointer(node);
+    uint64_t *base = (uint64_t*)(pointer(node) + sizeof(HeapNode));
     *base = size;
-    uint64_t *return_base = (uint64_t*)(pointer(node) + sizeof(uint64_t));
-    uint64_t *new_next = (uint64_t*)(pointer(node) + total_size);
+    uint64_t *return_base = (uint64_t*)(pointer(base) + sizeof(uint64_t));
+    uint64_t *new_next = (uint64_t*)(pointer(base) + total_size);
     uint64_t remaining_size = node->length - total_size;
 
-    if (remaining_size >= sizeof(HeapNode)){
+    HeapNode *replacement;
+    if (remaining_size < sizeof(HeapNode)){
+        replacement = next;
+        // update to use all remaining size
+        *base = size + remaining_size;
+    } else {
         // split and create a new free node
         HeapNode *new_node = (HeapNode*)new_next;
         new_node->length = remaining_size;
         new_node->next = next;
-        if (prev){
-            prev->next = new_node;
-        } else {
-            page->freelist = new_node;
-        }
+        replacement = new_node;
+    }
+
+    if (prev){
+        prev->next = replacement;
     } else {
-        // truncate
-        if (prev){
-            prev->next = next;
-        } else {
-            page->freelist = next;
-        }
+        page->freelist = replacement;
     }
 
     HeapNode *cursor = page->freelist;
@@ -357,39 +357,46 @@ uint64_t* kmalloc(uint64_t size)
     return return_base;
 }
 
-// bool kfree(uint64_t *address){
-//     uint64_t *virtual_frame = pointer_frame(address);
-//     uint64_t physical_frame = virtual_to_physical(virtual_frame);
+bool kfree(uint64_t *address){
+    uint64_t *virtual_frame = pointer_frame(address);
+    uint64_t physical_frame = virtual_to_physical(virtual_frame);
 
-//     uint64_t *allocated_pointer = (uint64_t*)(pointer(address) - sizeof(uint64_t));
-//     uint64_t size = *allocated_pointer;
-//     uint64_t total_size = size + sizeof(size);
+    uint64_t *kernel_pointer = (uint64_t*)(pointer(address) - sizeof(uint64_t));
+    uint64_t user_size = *kernel_pointer;
+    uint64_t kernel_size = user_size + sizeof(user_size);
 
-//     // walk the node and find the address node
-//     uint64_t *prev, *next;
-//     HeapNode *node = (HeapNode*)allocated_pointer;
-//     prev = NULL;
-//     next = node->next;
-//     while (node != allocated_pointer){
-//         prev = node;
-//         node = node->next;
-//         if (node->next){
-//             next = node->next;
-//         } else {
-//             next = NULL;
-//         }
-//     }
+    HeapPage *page = (HeapPage*)virtual_frame;
+    // walk the list and find the insert position
+    HeapNode *node = (HeapNode*)page->freelist;
+    uint64_t *prev, *next;
+    next = node->next;
+    prev = NULL;
+    while (node && node < kernel_pointer){
+        prev = node;
+        node = node->next;
+    }
 
-//     if (node != allocated_pointer){
-//         return 0;
-//     }
+    if (!node){
+        // last node
 
-//     if (prev){
-//         ((HeapNode*)prev)->next = next;
-//     } else {
+    }
 
-//     }
-// }
+    HeapNode *merge_start;
+    HeapNode *new_node = (HeapNode*)kernel_pointer;
+    if (!prev){
+        new_node->next = page->freelist;
+        page->freelist = new_node;
+        merge_start = page->freelist;
+    } else {
+        new_node->length = kernel_size - sizeof(HeapNode);
+        new_node->next = next;
+        merge_start = prev;
+    }
+
+    // todo merge adjacent intervals
+
+    next = node->next;
+}
 
 bool heapnode_is_empty(HeapNode *node)
 {
