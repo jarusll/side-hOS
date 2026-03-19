@@ -319,14 +319,16 @@ uint64_t* kmalloc(uint64_t size)
     }
     next = node->next;
 
+    // preserve node header
     uint64_t *base = (uint64_t*)(pointer(node) + sizeof(HeapNode));
+    // write size header
     *base = size;
     uint64_t *return_base = (uint64_t*)(pointer(base) + sizeof(uint64_t));
     uint64_t *new_next = (uint64_t*)(pointer(base) + total_size);
     uint64_t remaining_size = node->length - total_size;
 
     HeapNode *replacement;
-    if (remaining_size < sizeof(HeapNode)){
+    if (remaining_size < sizeof(HeapNode)){ // cant split
         replacement = next;
         // update to use all remaining size
         *base = size + remaining_size;
@@ -361,41 +363,31 @@ bool kfree(uint64_t *address){
     uint64_t *virtual_frame = pointer_frame(address);
     uint64_t physical_frame = virtual_to_physical(virtual_frame);
 
-    uint64_t *kernel_pointer = (uint64_t*)(pointer(address) - sizeof(uint64_t));
-    uint64_t user_size = *kernel_pointer;
-    uint64_t kernel_size = user_size + sizeof(user_size);
+    uint64_t *base = (uint64_t*)(pointer(address) - sizeof(uint64_t));
+    HeapNode *node = (HeapNode*)(pointer(base) - sizeof(HeapNode));
+    node->length = *base;
 
     HeapPage *page = (HeapPage*)virtual_frame;
     // walk the list and find the insert position
-    HeapNode *node = (HeapNode*)page->freelist;
-    uint64_t *prev, *next;
-    next = node->next;
+    HeapNode *cursor = (HeapNode*)page->freelist;
+    HeapNode *prev;
     prev = NULL;
-    while (node && node < kernel_pointer){
-        prev = node;
-        node = node->next;
+    while (cursor && ((uint64_t)cursor < (uint64_t)node)){
+        prev = cursor;
+        cursor = cursor->next;
     }
 
-    if (!node){
-        // last node
-
-    }
-
-    HeapNode *merge_start;
-    HeapNode *new_node = (HeapNode*)kernel_pointer;
+    // insert at head
     if (!prev){
-        new_node->next = page->freelist;
-        page->freelist = new_node;
-        merge_start = page->freelist;
+        node->next = cursor;
+        page->freelist = node;
     } else {
-        new_node->length = kernel_size - sizeof(HeapNode);
-        new_node->next = next;
-        merge_start = prev;
+        // insert between prev and cursor
+        prev->next = node;
+        node->next = cursor;
     }
 
-    // todo merge adjacent intervals
-
-    next = node->next;
+    return true;
 }
 
 bool heapnode_is_empty(HeapNode *node)
