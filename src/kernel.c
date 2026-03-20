@@ -453,14 +453,30 @@ bool kfree(uint64_t *address){
         cursor = cursor->next;
     }
 
+    HeapNode *merge_cursor;
     // insert at head
     if (!prev){
         node->next = cursor;
         page->freelist = node;
+
+        merge_cursor = node;
     } else {
         // insert between prev and cursor
         prev->next = node;
         node->next = cursor;
+
+        merge_cursor = prev;
+    }
+
+    while (merge_cursor && merge_cursor->next){
+        uint8_t *end_of_cursor = pointer(merge_cursor) + sizeof(HeapNode) + merge_cursor->length + sizeof(uint64_t);
+        if (end_of_cursor == (uint8_t*)(merge_cursor->next)){
+            merge_cursor->length += sizeof(HeapNode);
+            merge_cursor->length += merge_cursor->next->length;
+            merge_cursor->next = merge_cursor->next->next;
+        } else {
+            merge_cursor = merge_cursor->next;
+        }
     }
 
     return true;
