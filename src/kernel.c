@@ -88,25 +88,16 @@ static inline void init_hardware(void) {
     serial_init();
 }
 
-void identify(char *str){
-    for (uint8_t i = 0; i < 10; i++){
-        kstdout(str);
-        kstdout("\r\n");
-    }
-
-    return;
-}
-
 void identify_cpu(struct limine_mp_info *info){
     int64_t i = 0;
     while(1){
         while (lock_acquire(&serial_lock) == false);
         i++;
-        kstdout("Slave working - ");
-        puthex(info->lapic_id);
-        kstdout(" - ");
-        puthex(i);
-        kstdout("\r\n");
+        kputs("Slave working - ");
+        kputhex(info->lapic_id);
+        kputs(" - ");
+        kputhex(i);
+        kputs("\r\n");
         lock_release(&serial_lock);
     }
 }
@@ -172,13 +163,13 @@ void kmain(void) {
 
     init_hardware();
 
-    kstdout("Hello from master");
+    kputs("Hello from master");
 
     while (1){
-        kstdout(">");
-        kstdin();
+        kputs(">");
+        kgets();
         kshell();
-        kstdout("\r\n");
+        kputs("\r\n");
     }
 
     halt();
@@ -187,94 +178,94 @@ void kmain(void) {
 void kshell(){
     if (strcmp(CommandContext.command, "ping") == 0){
         char *str = "pong";
-        kstdout(str);
+        kputs(str);
     } else if(strcmp(CommandContext.command, "malloc") == 0){
         uint64_t size = 1000;
         uint64_t *addr = kmalloc(size);
-        kstdout("malloc size=");
-        puthex(size);
-        kstdout(" addr=");
-        puthex((uint64_t)addr);
-        kstdout("\r\n");
+        kputs("malloc size=");
+        kputhex(size);
+        kputs(" addr=");
+        kputhex((uint64_t)addr);
+        kputs("\r\n");
 
         if (addr){
             if (!pointer_push(&PointerStore, addr)){
-                kstdout("pointer list full\r\n");
+                kputs("pointer list full\r\n");
             } else {
-                kstdout("malloc success\r\n");
+                kputs("malloc success\r\n");
             }
         } else {
-            kstdout("malloc failed\r\n");
+            kputs("malloc failed\r\n");
         }
     } else if(strcmp(CommandContext.command, "alloc") == 0){
         frame = memory_allocate_frame();
-        puthex(frame);
-        kstdout("\r\n");
+        kputhex(frame);
+        kputs("\r\n");
     } else if(strcmp(CommandContext.command, "free") == 0){
         uint64_t *addr = pointer_pop(&PointerStore);
         if (!addr){
-            kstdout("no alloc to free\r\n");
+            kputs("no alloc to free\r\n");
         } else {
             bool status = kfree(addr);
-            kstdout("free addr=");
-            puthex((uint64_t)addr);
-            kstdout(status ? " ok\r\n" : " fail\r\n");
+            kputs("free addr=");
+            kputhex((uint64_t)addr);
+            kputs(status ? " ok\r\n" : " fail\r\n");
         }
     } else if(strcmp(CommandContext.command, "freeframe") == 0){
         bool status = memory_free_frame(frame);
-        puthex(frame);
-        kstdout("\n");
+        kputhex(frame);
+        kputs("\n");
         if (status){
-            kstdout("freed\n");
+            kputs("freed\n");
         } else {
-            kstdout("error\n");
+            kputs("error\n");
         }
     } else if(strcmp(CommandContext.command, "freelist") == 0){
-        kstdout("cursor=");
+        kputs("cursor=");
         uint8_t *cursor = &Memory.freelist.cursor;
-        puthex(*cursor);
-        kstdout("\r\n");
+        kputhex(*cursor);
+        kputs("\r\n");
 
         Segment *segments = Memory.freelist.segments;
         for (int i = 0; i < *cursor; i++){
-            kstdout("seg ");
-            puthex(i);
-            kstdout(" base=");
-            puthex(segments[i].base);
-            kstdout(" len=");
-            puthex(segments[i].length);
-            kstdout("\r\n");
+            kputs("seg ");
+            kputhex(i);
+            kputs(" base=");
+            kputhex(segments[i].base);
+            kputs(" len=");
+            kputhex(segments[i].length);
+            kputs("\r\n");
         }
     } else if(strcmp(CommandContext.command, "hhdm") == 0){
-        kstdout("hhdm=");
-        puthex(HHDM_OFFSET);
-        kstdout("\r\n");
+        kputs("hhdm=");
+        kputhex(HHDM_OFFSET);
+        kputs("\r\n");
     } else if(strcmp(CommandContext.command, "heapdump") == 0){
         HeapPage *page = Memory.heap_pages;
         if (!page){
-            kstdout("no heap pages\r\n");
+            kputs("no heap pages\r\n");
         }
 
         uint64_t page_index = 0;
         while (page){
-            kstdout("page ");
-            puthex(page_index);
-            kstdout(" base=");
-            puthex((uint64_t)page);
-            kstdout(" largest=");
-            puthex(page->largest);
-            kstdout("\r\n");
+            kputs("page ");
+            kputhex(page_index);
+            kputs(" base=");
+            kputhex((uint64_t)page);
+            kputs(" largest=");
+            kputhex(page->largest);
+            kputs("\r\n");
 
             HeapNode *node = page->freelist;
             uint64_t node_index = 0;
             while (node){
-                kstdout("  node ");
-                puthex(node_index);
-                kstdout(" len=");
-                puthex(node->length);
-                kstdout(" next=");
-                puthex((uint64_t)node->next);
-                kstdout("\r\n");
+                kputs("  node ");
+                kputhex(node_index);
+                kputs(" len=");
+                kputhex(node->length);
+                kputs(" next=");
+                kputhex((uint64_t)node->next);
+                kputs("\r\n");
 
                 node = node->next;
                 node_index++;
@@ -284,17 +275,17 @@ void kshell(){
             page_index++;
         }
     } else {
-        kstdout("Invalid command");
+        kputs("Invalid command");
     }
 
     CommandContext = (Command){0};
 }
 
-void kstdout(char* str){
+void kputs(char* str){
     serial_write_str(str);
 }
 
-void puthex(uint64_t value)
+void kputhex(uint64_t value)
 {
     serial_write('0');
     serial_write('x');
@@ -340,17 +331,22 @@ void lock_release(Lock *lock)
     lock->lock = 0;
 }
 
-char *kstdin()
+void task_init(Task *t)
+{
+    // malloc 64kb
+}
+
+char *kgets()
 {
     serial_read_str(CommandContext.command);
     return CommandContext.command;
 }
 
-uint64_t virtual_to_physical(uint64_t *virtual){
+uint64_t address_virtual_to_physical(uint64_t *virtual){
     return (uint64_t)virtual - HHDM_OFFSET;
 }
 
-uint64_t* physical_to_virtual(uint64_t physical){
+uint64_t* address_physical_to_virtual(uint64_t physical){
     return (uint64_t*)(physical + HHDM_OFFSET);
 }
 
@@ -361,7 +357,7 @@ uint64_t memory_allocate_frame()
         Segment *segment = &Memory.freelist.segments[segment_cursor];
         if (segment->length > 0){
             uint64_t frame_physical = memory_nth_segment(segment, segment->length - 1);
-            uint64_t *frame_pointer = physical_to_virtual(frame_physical);
+            uint64_t *frame_pointer = address_physical_to_virtual(frame_physical);
             segment->length--;
 
             // zero out
@@ -439,7 +435,7 @@ uint64_t* kmalloc(uint64_t size)
 
     if (page == NULL || page->largest < total_size){
         uint64_t new_physical_frame = memory_allocate_frame();
-        page = (HeapPage*)physical_to_virtual(new_physical_frame);
+        page = (HeapPage*)address_physical_to_virtual(new_physical_frame);
     }
 
     // search for free heap space
@@ -499,7 +495,7 @@ uint64_t* kmalloc(uint64_t size)
 
 bool kfree(uint64_t *address){
     uint64_t *virtual_frame = pointer_frame(address);
-    uint64_t physical_frame = virtual_to_physical(virtual_frame);
+    uint64_t physical_frame = address_virtual_to_physical(virtual_frame);
 
     uint64_t *base = (uint64_t*)(pointer(address) - sizeof(uint64_t));
     HeapNode *node = (HeapNode*)(pointer(base) - sizeof(HeapNode));

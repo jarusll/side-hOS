@@ -86,13 +86,30 @@ typedef struct MemoryContext {
     HeapPage *heap_pages;
 } MemoryContext;
 
-char* kstdin();
-void kstdout(char* str);
-void puthex(uint64_t value);
+typedef enum {
+    READY,
+    RUNNING,
+    BLOCKED
+} TaskStatus;
+
+typedef struct Task {
+    uint64_t *base;
+    uint64_t id;
+    uint64_t rsp;
+    TaskStatus status;
+} Task;
+
+void task_init(Task *t);
+void task_exec(Task *t);
+void task_destroy(Task *t);
+
+char* kgets();
+void kputs(char* str);
+void kputhex(uint64_t value);
 void kshell();
 static void halt(void);
-uint64_t virtual_to_physical(uint64_t*);
-uint64_t* physical_to_virtual(uint64_t);
+uint64_t address_virtual_to_physical(uint64_t*);
+uint64_t* address_physical_to_virtual(uint64_t);
 uint64_t memory_allocate_frame();
 bool memory_free_frame(uint64_t physical);
 uint64_t memory_nth_segment(Segment *seg, uint64_t n);
