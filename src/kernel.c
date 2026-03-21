@@ -207,7 +207,7 @@ void kshell(){
             kstdout("malloc failed\r\n");
         }
     } else if(strcmp(CommandContext.command, "alloc") == 0){
-        frame = alloc_frame();
+        frame = memory_allocate_frame();
         puthex(frame);
         kstdout("\r\n");
     } else if(strcmp(CommandContext.command, "free") == 0){
@@ -221,7 +221,7 @@ void kshell(){
             kstdout(status ? " ok\r\n" : " fail\r\n");
         }
     } else if(strcmp(CommandContext.command, "freeframe") == 0){
-        bool status = free_frame(frame);
+        bool status = memory_free_frame(frame);
         puthex(frame);
         kstdout("\n");
         if (status){
@@ -354,7 +354,7 @@ uint64_t* physical_to_virtual(uint64_t physical){
     return (uint64_t*)(physical + HHDM_OFFSET);
 }
 
-uint64_t alloc_frame()
+uint64_t memory_allocate_frame()
 {
     uint8_t segment_cursor = 0;
     while (segment_cursor < Memory.freelist.cursor){
@@ -387,7 +387,7 @@ uint64_t alloc_frame()
     return 0;
 }
 
-bool free_frame(uint64_t physical)
+bool memory_free_frame(uint64_t physical)
 {
     uint8_t segment_cursor = 0;
     uint8_t *cursor = &Memory.freelist.cursor;
@@ -438,7 +438,7 @@ uint64_t* kmalloc(uint64_t size)
     }
 
     if (page == NULL || page->largest < total_size){
-        uint64_t new_physical_frame = alloc_frame();
+        uint64_t new_physical_frame = memory_allocate_frame();
         page = (HeapPage*)physical_to_virtual(new_physical_frame);
     }
 
