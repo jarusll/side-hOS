@@ -64,6 +64,7 @@ static uint64_t HHDM_OFFSET = {0};
 static PointerList PointerStore = {0};
 static uint64_t frame;
 static uint64_t last = {0};
+static Lock serial_lock = {0};
 
 static bool pointer_push(PointerList *list, uint64_t *ptr)
 {
@@ -97,14 +98,16 @@ void identify(char *str){
 }
 
 void identify_cpu(struct limine_mp_info *info){
-    int i = 0;
+    int64_t i = 0;
     while(1){
+        while (lock_acquire(&serial_lock) == false);
         i++;
-    }
-    while(1){
         kstdout("Slave working - ");
         puthex(info->lapic_id);
+        kstdout(" - ");
+        puthex(i);
         kstdout("\r\n");
+        lock_release(&serial_lock);
     }
 }
 
@@ -315,7 +318,30 @@ void puthex(uint64_t value)
     }
 }
 
-char* kstdin(){
+bool lock_acquire(Lock *lock)
+{
+    unsigned char success;
+    unsigned char expected = 0;
+    unsigned char new = 1;
+
+    asm volatile(
+        "lock cmpxchgb %2, %1\n\t"
+        "setz %0\n\t"
+        : "=q"(success), "+m"(lock->lock)
+        : "q"(new), "a"(expected)
+        : "memory"
+    );
+
+    return success;
+}
+
+void lock_release(Lock *lock)
+{
+    lock->lock = 0;
+}
+
+char *kstdin()
+{
     serial_read_str(CommandContext.command);
     return CommandContext.command;
 }

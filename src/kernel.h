@@ -45,6 +45,13 @@
 #define DEFAULT_COLOR_SCHEME ((ColorScheme){ .fg = 0xFFFFFFFF, .bg = 0xFF })
 #define DEFAULT_CURSOR ((TTYPoint){.x = 0, .y = 0})
 
+typedef struct Lock {
+    uint8_t lock;
+} Lock;
+
+bool lock_acquire(Lock *lock);
+void lock_release(Lock *lock);
+
 typedef struct Segment {
     uint64_t base;
     uint64_t length;
@@ -167,14 +174,6 @@ int strcmp(const char *a, const char *b) {
 
 static inline uint8_t* pointer(void *ptr){
     return (uint8_t*)ptr;
-}
-
-static inline void* pointer_add(void* base, size_t n){
-    return (void*)((uint8_t*)base + n);
-}
-
-static inline void* pointer_sub(void* base, size_t n){
-    return (void*)((uint8_t*)base - n);
 }
 
 static inline void* pointer_frame(void *address){
