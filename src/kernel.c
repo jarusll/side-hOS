@@ -35,12 +35,12 @@ static volatile struct limine_memmap_request memmap_request = {
 };
 
 // ENABLE MULTIPROCESSING
-// __attribute__((used, section(".limine_requests")))
-// static volatile struct limine_mp_request mp_request = {
-//     .id = LIMINE_MP_REQUEST_ID,
-//     .revision = 0,
-//     .flags = 0x0000000000000001
-// };
+__attribute__((used, section(".limine_requests")))
+static volatile struct limine_mp_request mp_request = {
+    .id = LIMINE_MP_REQUEST_ID,
+    .revision = 0,
+    .flags = 0x0000000000000001
+};
 
 __attribute__((used, section(".limine_requests_end")))
 static volatile uint64_t limine_requests_end_marker[] = LIMINE_REQUESTS_END_MARKER;
@@ -87,6 +87,27 @@ static inline void init_hardware(void) {
     serial_init();
 }
 
+void identify(char *str){
+    for (uint8_t i = 0; i < 10; i++){
+        kstdout(str);
+        kstdout("\r\n");
+    }
+
+    return;
+}
+
+void identify_cpu(struct limine_mp_info *info){
+    int i = 0;
+    while(1){
+        i++;
+    }
+    while(1){
+        kstdout("Slave working - ");
+        puthex(info->lapic_id);
+        kstdout("\r\n");
+    }
+}
+
 void kmain(void) {
     // Ensure the bootloader actually understands our base revision
     if (LIMINE_BASE_REVISION_SUPPORTED(limine_base_revision) == false) {
@@ -131,9 +152,24 @@ void kmain(void) {
     // get the hhdm offset
     HHDM_OFFSET = hhdm_reqest.response->offset;
 
+    if (mp_request.response == NULL){
+        halt();
+    }
+
+
+    uint32_t bsp_id = mp_request.response->bsp_lapic_id;
+
+    uint64_t cpu_count = mp_request.response->cpu_count;
+    struct limine_mp_info **cpus = mp_request.response->cpus;
+    for (uint64_t i = 0; i < cpu_count; i++){
+        if (cpus[i]->lapic_id != bsp_id){
+            cpus[i]->goto_address = identify_cpu;
+        }
+    }
+
     init_hardware();
 
-    kstdout("Hello, World\n");
+    kstdout("Hello from master");
 
     while (1){
         kstdout(">");

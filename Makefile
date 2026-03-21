@@ -42,7 +42,7 @@ override LDFLAGS += \
     -T linker.lds
 
 # Virt flags
-QEMU_FLAGS := -m 128M -cdrom $(BUILD_DIR)/side-hOS.iso -serial stdio -display none
+QEMU_FLAGS := -m 128M -cdrom $(BUILD_DIR)/side-hOS.iso -serial stdio -display none -smp 3
 
 # Default target. This must come first, before header dependencies.
 .PHONY: all
