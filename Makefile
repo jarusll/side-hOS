@@ -78,4 +78,4 @@ boot: iso
 .PHONY: debug
 debug: iso
 	qemu-system-x86_64 $(QEMU_FLAGS) \
-        -S -s
+        -s

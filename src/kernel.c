@@ -63,7 +63,6 @@ static Command CommandContext = {0};
 static uint64_t HHDM_OFFSET = {0};
 static PointerList PointerStore = {0};
 static uint64_t frame;
-static uint64_t last = {0};
 static Lock serial_lock = {0};
 
 static bool pointer_push(PointerList *list, uint64_t *ptr)
@@ -153,17 +152,20 @@ void kmain(void) {
 
     uint32_t bsp_id = mp_request.response->bsp_lapic_id;
 
-    uint64_t cpu_count = mp_request.response->cpu_count;
-    struct limine_mp_info **cpus = mp_request.response->cpus;
-    for (uint64_t i = 0; i < cpu_count; i++){
-        if (cpus[i]->lapic_id != bsp_id){
-            cpus[i]->goto_address = identify_cpu;
-        }
-    }
+    // uint64_t cpu_count = mp_request.response->cpu_count;
+    // struct limine_mp_info **cpus = mp_request.response->cpus;
+    // for (uint64_t i = 0; i < cpu_count; i++){
+    //     if (cpus[i]->lapic_id != bsp_id){
+    //         cpus[i]->goto_address = identify_cpu;
+    //     }
+    // }
 
     init_hardware();
 
-    kputs("Hello from master");
+    kputs("Hello, World!\r\n");
+    uint64_t control = control0();
+    kputhex(control);
+    kputs("\r\n");
 
     while (1){
         kputs(">");
@@ -179,8 +181,11 @@ void kshell(){
     if (strcmp(CommandContext.command, "ping") == 0){
         char *str = "pong";
         kputs(str);
+    } else if(strcmp(CommandContext.command, "sse") == 0){
+        asm volatile("xorps %xmm0, %xmm0");
+        kputs("SSE\r\n");
     } else if(strcmp(CommandContext.command, "malloc") == 0){
-        uint64_t size = 1000;
+        uint64_t size = 5000;
         uint64_t *addr = kmalloc(size);
         kputs("malloc size=");
         kputhex(size);
@@ -197,8 +202,12 @@ void kshell(){
         } else {
             kputs("malloc failed\r\n");
         }
-    } else if(strcmp(CommandContext.command, "alloc") == 0){
+    } else if(strcmp(CommandContext.command, "frame") == 0){
         frame = memory_allocate_frame();
+        kputhex(frame);
+        kputs("\r\n");
+    } else if(strcmp(CommandContext.command, "frames") == 0){
+        frame = memory_allocate_frames(5);
         kputhex(frame);
         kputs("\r\n");
     } else if(strcmp(CommandContext.command, "free") == 0){
@@ -213,6 +222,15 @@ void kshell(){
         }
     } else if(strcmp(CommandContext.command, "freeframe") == 0){
         bool status = memory_free_frame(frame);
+        kputhex(frame);
+        kputs("\n");
+        if (status){
+            kputs("freed\n");
+        } else {
+            kputs("error\n");
+        }
+    } else if(strcmp(CommandContext.command, "freeframes") == 0){
+        bool status = memory_free_frames(frame, 5);
         kputhex(frame);
         kputs("\n");
         if (status){
@@ -383,6 +401,40 @@ uint64_t memory_allocate_frame()
     return 0;
 }
 
+uint64_t memory_allocate_frames(uint64_t count){
+    uint8_t segment_cursor = 0;
+    while (segment_cursor < Memory.freelist.cursor){
+        Segment *segment = &Memory.freelist.segments[segment_cursor];
+        if (segment->length < count){
+            segment_cursor++;
+            continue;
+        }
+
+        uint64_t frame_physical = memory_nth_segment(segment, segment->length - count);
+        uint64_t *frame_pointer = address_physical_to_virtual(frame_physical);
+        segment->length--;
+
+        // zero out
+        uint64_t total_size = SIZE_4KB * count;
+        memset(frame_pointer, 0, total_size);
+
+        uint64_t free_size = total_size - sizeof(HeapPage) - sizeof(uint64_t);
+        uint64_t *header_base = (uint64_t*)(pointer(frame_pointer) + sizeof(HeapPage));
+        *header_base = free_size;
+
+        HeapPage *page = (HeapPage*)frame_pointer;
+        page->freelist = NULL;
+        page->largest = 0;
+
+        page->next = Memory.heap_pages;
+        Memory.heap_pages = page;
+
+        return frame_physical;
+    }
+
+    return 0;
+}
+
 bool memory_free_frame(uint64_t physical)
 {
     uint8_t segment_cursor = 0;
@@ -415,6 +467,17 @@ bool memory_free_frame(uint64_t physical)
     return true;
 }
 
+bool memory_free_frames(uint64_t physical, uint64_t frame_count){
+    Segment *segments = Memory.freelist.segments;
+    uint8_t *cursor = &Memory.freelist.cursor;
+    segments[*cursor] = (Segment){
+        .base = physical,
+        .length = frame_count
+    };
+    *cursor++;
+    return true;
+}
+
 uint64_t memory_nth_segment(Segment *seg, uint64_t n)
 {
     return seg->base + (SIZE_4KB * n);
@@ -422,9 +485,15 @@ uint64_t memory_nth_segment(Segment *seg, uint64_t n)
 
 uint64_t* kmalloc(uint64_t size)
 {
-    // ignore multi frame allocs
     if (size > SMALL_PAGE_MAXIMUM_SIZE) {
-        return 0;
+        uint64_t total_size = sizeof(HeapPage) + sizeof(uint64_t) + size;
+        uint64_t frame_counts = (total_size + SIZE_4KB - 1) / SIZE_4KB;
+
+        uint64_t physical_frame = memory_allocate_frames(frame_counts);
+        uint64_t *virtual_frame = address_physical_to_virtual(physical_frame);
+        uint64_t *return_base = (uint64_t*)(pointer(virtual_frame) + sizeof(HeapPage) + sizeof(uint64_t));
+
+        return return_base;
     }
 
     uint64_t total_size = size + sizeof(uint64_t);
@@ -494,10 +563,21 @@ uint64_t* kmalloc(uint64_t size)
 }
 
 bool kfree(uint64_t *address){
+
     uint64_t *virtual_frame = pointer_frame(address);
     uint64_t physical_frame = address_virtual_to_physical(virtual_frame);
 
     uint64_t *base = (uint64_t*)(pointer(address) - sizeof(uint64_t));
+    uint64_t size = *base;
+
+    // contiguous free
+    if (size > SMALL_PAGE_MAXIMUM_SIZE) {
+        uint64_t total_size = sizeof(HeapPage) + sizeof(uint64_t) + size;
+        uint64_t frame_counts = (total_size + SIZE_4KB - 1) / SIZE_4KB;
+        memory_free_frames(physical_frame, frame_counts);
+        return true;
+    }
+
     HeapNode *node = (HeapNode*)(pointer(base) - sizeof(HeapNode));
     node->length = *base;
 
@@ -546,4 +626,15 @@ bool heapnode_is_empty(HeapNode *node)
         return true;
     }
     return false;
+}
+
+uint64_t control0(){
+    uint64_t control;
+    asm volatile(
+        "mov %%cr0, %[control]"
+        : [control]"=rm"(control)
+        :
+        :
+    );
+    return control;
 }

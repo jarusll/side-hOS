@@ -74,6 +74,7 @@ typedef struct HeapNode {
 
 typedef struct HeapPage {
     HeapNode *freelist;
+    uint64_t frames;
     uint64_t largest;
     struct HeapPage *next;
 } HeapPage;
@@ -111,11 +112,14 @@ static void halt(void);
 uint64_t address_virtual_to_physical(uint64_t*);
 uint64_t* address_physical_to_virtual(uint64_t);
 uint64_t memory_allocate_frame();
+uint64_t memory_allocate_frames(uint64_t);
 bool memory_free_frame(uint64_t physical);
+bool memory_free_frames(uint64_t physical, uint64_t frame_count);
 uint64_t memory_nth_segment(Segment *seg, uint64_t n);
 uint64_t* kmalloc(uint64_t size);
 bool kfree(uint64_t*);
 bool heapnode_is_empty(HeapNode *node);
+uint64_t control0();
 
 
 uint8_t inb(uint16_t port) { uint8_t ret;
@@ -195,6 +199,12 @@ static inline uint8_t* pointer(void *ptr){
 
 static inline void* pointer_frame(void *address){
     return (void*)((uint64_t)address & ~(uint64_t)0xFFF);
+}
+
+static inline uint64_t rdtscp() {
+    uint32_t lo, hi;
+    asm volatile ("rdtscp" : "=a"(lo), "=d"(hi) :: "rcx");
+    return ((uint64_t)hi << 32) | lo;
 }
 
 #endif

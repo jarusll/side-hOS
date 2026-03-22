@@ -1,6 +1,5 @@
 target remote localhost:1234
 symbol-file build/kernel.elf
-break kmain
 
 define log_ram
 python
