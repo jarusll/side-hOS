@@ -64,6 +64,8 @@ static uint64_t HHDM_OFFSET = {0};
 static PointerList PointerStore = {0};
 static uint64_t frame;
 static Lock serial_lock = {0};
+static Task *tasks = {0};
+static Lock task_lock = {0};
 
 static bool pointer_push(PointerList *list, uint64_t *ptr)
 {
@@ -87,17 +89,31 @@ static inline void init_hardware(void) {
     serial_init();
 }
 
-void identify_cpu(struct limine_mp_info *info){
-    int64_t i = 0;
+void ap_entry(struct limine_mp_info *info){
+    CPULocal *cpu_local = (CPULocal*)kmalloc(sizeof(CPULocal));
+    set_gs_base(cpu_local);
+    memcpy(&cpu_local->info, info, sizeof(struct limine_mp_info));
+
     while(1){
-        while (lock_acquire(&serial_lock) == false);
-        i++;
-        kputs("Slave working - ");
-        kputhex(info->lapic_id);
-        kputs(" - ");
-        kputhex(i);
-        kputs("\r\n");
-        lock_release(&serial_lock);
+ap_entry_resume:
+        while(lock_acquire(&task_lock) == false);
+        while(tasks == NULL){
+            lock_release(&task_lock);
+            // cpu_pause();
+            while(lock_acquire(&task_lock) == false);
+        }
+        Task *t = tasks;
+        tasks = tasks->next;
+        lock_release(&task_lock);
+
+        asm volatile(
+            "mov %%rsp, %0"
+            : "=r"(cpu_local->context.rsp)
+            :
+            :
+        );
+
+        task_run(t);
     }
 }
 
@@ -152,20 +168,28 @@ void kmain(void) {
 
     uint32_t bsp_id = mp_request.response->bsp_lapic_id;
 
-    // uint64_t cpu_count = mp_request.response->cpu_count;
-    // struct limine_mp_info **cpus = mp_request.response->cpus;
-    // for (uint64_t i = 0; i < cpu_count; i++){
-    //     if (cpus[i]->lapic_id != bsp_id){
-    //         cpus[i]->goto_address = identify_cpu;
-    //     }
-    // }
+    uint64_t cpu_count = mp_request.response->cpu_count;
+    struct limine_mp_info **cpus = mp_request.response->cpus;
+    for (uint64_t i = 0; i < cpu_count; i++){
+        if (cpus[i]->lapic_id != bsp_id){
+            cpus[i]->goto_address = ap_entry;
+        }
+    }
 
     init_hardware();
 
     kputs("Hello, World!\r\n");
-    uint64_t control = control0();
-    kputhex(control);
-    kputs("\r\n");
+
+    Task *factorialTask = (Task*)kmalloc(sizeof(Task));
+    Task *fibonacciTask = (Task*)kmalloc(sizeof(Task));
+    task_init(factorialTask, factorial_task);
+    task_exec(factorialTask);
+
+    task_init(fibonacciTask, fibonacci_task);
+    task_exec(fibonacciTask);
+
+    asm volatile("cli");
+    while (1){ }
 
     while (1){
         kputs(">");
@@ -349,9 +373,91 @@ void lock_release(Lock *lock)
     lock->lock = 0;
 }
 
-void task_init(Task *t)
+uint64_t factorial(uint64_t n) {
+    uint64_t result = 1;
+    for (uint64_t i = 2; i <= n; i++) {
+        result *= i;
+    }
+    while (lock_acquire(&serial_lock) == false);
+    kputs("Factorial - ");
+    kputhex(n);
+    kputs(" - ");
+    kputhex(result);
+    kputs("\r\n");
+    lock_release(&serial_lock);
+    return result;
+}
+
+void factorial_task(){
+    factorial(10);
+}
+
+uint64_t fibonacci(uint64_t n) {
+    if (n < 2) return n;
+
+    uint64_t a = 0, b = 1;
+    for (uint64_t i = 2; i <= n; i++) {
+        uint64_t t = a + b;
+        a = b;
+        b = t;
+    }
+
+    while (lock_acquire(&serial_lock) == false);
+    kputs("Fibonacci - ");
+    kputhex(n);
+    kputs(" - ");
+    kputhex(b);
+    kputs("\r\n");
+    lock_release(&serial_lock);
+    return b;
+}
+
+void fibonacci_task(){
+    fibonacci(100);
+}
+
+void task_init(Task *t, void (entry)(void))
 {
-    // malloc 64kb
+    uint64_t *stack = kmalloc(SIZE_4KB * 4);
+    t->stack = (uint64_t*)stack;
+    t->entry = entry;
+
+    uint64_t *sp = (uint64_t*)(pointer(stack) + SIZE_4KB);
+    sp = (uint64_t*)((uintptr_t)sp & ~0xF);
+
+    *(--sp) = 0;
+    *(--sp) = (uint64_t)task_exit;
+    *(--sp) = (uint64_t)entry;
+
+    t->context.rsp = (uint64_t)sp;
+}
+
+void task_exec(Task *t)
+{
+    while(!lock_acquire(&task_lock));
+    t->next = NULL;
+    if (tasks == NULL){
+        tasks = t;
+    } else {
+        Task *cur = tasks;
+        while (cur->next){
+            cur = cur->next;
+        }
+        cur->next = t;
+    }
+    lock_release(&task_lock);
+}
+
+void task_exit() {
+    struct limine_mp_info* info = get_cpu_info();
+    asm volatile(
+        "mov %0, %%rsp\n\t"
+        "jmp *%1\n"
+        :
+        : "r"(RSP[0]),
+        "r"(RIP[info->lapic_id])
+        : "memory"
+    );
 }
 
 char *kgets()

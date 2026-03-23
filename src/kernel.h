@@ -8,6 +8,9 @@
 
 #include "serial.h"
 
+void fibonacci_task();
+void factorial_task();
+
 
 #define SIZE_4KB 0x1000
 
@@ -88,21 +91,46 @@ typedef struct MemoryContext {
 } MemoryContext;
 
 typedef enum {
-    READY,
+    INIT = 0,
     RUNNING,
     BLOCKED
 } TaskStatus;
 
+typedef struct Context {
+    uint64_t r15, r14, r13, r12;
+    uint64_t r11, r10, r9, r8;
+    uint64_t rsi, rdi, rbp, rdx, rcx, rbx, rax;
+    uint64_t rip, cs, rflags, rsp, ss;
+} Context;
+
 typedef struct Task {
-    uint64_t *base;
+    uint64_t *stack;
+    void (*entry)();
     uint64_t id;
-    uint64_t rsp;
+    Context context;
     TaskStatus status;
+    struct Task *next;
 } Task;
 
-void task_init(Task *t);
+void task_init(Task *t, void (entry)(void));
 void task_exec(Task *t);
-void task_destroy(Task *t);
+
+void task_exit();
+
+void task_run(Task *t) {
+    asm volatile(
+        "mov %0, %%rsp\n"
+        "ret\n"
+        :
+        : "r"(t->context.rsp)
+        : "memory"
+    );
+}
+
+typedef struct CPULocal {
+    Context context;
+    struct limine_mp_info info;
+} CPULocal;
 
 char* kgets();
 void kputs(char* str);
@@ -207,4 +235,37 @@ static inline uint64_t rdtscp() {
     return ((uint64_t)hi << 32) | lo;
 }
 
+static inline void cpu_pause(void){
+    asm volatile("pause");
+}
+
+
+static inline void set_gs_base(void *ptr) {
+    uint64_t addr = (uint64_t)ptr;
+
+    asm volatile(
+        "wrmsr"
+        :
+        : "c"(0xC0000101), "a"((uint32_t)addr), "d"((uint32_t)(addr >> 32))
+        : "memory"
+    );
+}
+
+static inline void *get_gs_base(void) {
+    uint32_t lo, hi;
+
+    asm volatile(
+        "rdmsr"
+        : "=a"(lo), "=d"(hi)
+        : "c"(0xC0000101)
+    );
+
+    return (void *)(((uint64_t)hi << 32) | lo);
+}
+
+static inline struct limine_mp_info* get_cpu_info(){
+    return (struct limine_mp_info*)get_gs_base();
+}
+
 #endif
+
