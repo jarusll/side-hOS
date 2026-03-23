@@ -412,9 +412,8 @@ uint64_t memory_allocate_frames(uint64_t count){
 
         uint64_t frame_physical = memory_nth_segment(segment, segment->length - count);
         uint64_t *frame_pointer = address_physical_to_virtual(frame_physical);
-        segment->length--;
+        segment->length -= count;
 
-        // zero out
         uint64_t total_size = SIZE_4KB * count;
         memset(frame_pointer, 0, total_size);
 
@@ -425,9 +424,6 @@ uint64_t memory_allocate_frames(uint64_t count){
         HeapPage *page = (HeapPage*)frame_pointer;
         page->freelist = NULL;
         page->largest = 0;
-
-        page->next = Memory.heap_pages;
-        Memory.heap_pages = page;
 
         return frame_physical;
     }
@@ -463,7 +459,7 @@ bool memory_free_frame(uint64_t physical)
         .base = physical,
         .length = 1
     };
-    *cursor++;
+    (*cursor)++;
     return true;
 }
 
@@ -474,7 +470,7 @@ bool memory_free_frames(uint64_t physical, uint64_t frame_count){
         .base = physical,
         .length = frame_count
     };
-    *cursor++;
+    (*cursor)++;
     return true;
 }
 
