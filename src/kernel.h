@@ -98,24 +98,26 @@ typedef enum {
 
 typedef struct Context {
     uint64_t r15, r14, r13, r12;
-    uint64_t r11, r10, r9, r8;
-    uint64_t rsi, rdi, rbp, rdx, rcx, rbx, rax;
-    uint64_t rip, cs, rflags, rsp, ss;
+    uint64_t rbx, rbp, rsp;
+    // uint64_t r11, r10, r9, r8;
+    // uint64_t rsi, rdi, rbp, rdx, rcx, rbx, rax;
+    // uint64_t rip, cs, rflags, rsp, ss;
 } Context;
 
 typedef struct Task {
     uint64_t *stack;
-    void (*entry)();
+    void (*entry)(Task* t);
     uint64_t id;
     Context context;
     TaskStatus status;
     struct Task *next;
 } Task;
 
-void task_init(Task *t, void (entry)(void));
+void task_init(Task *t, void (entry)(Task*));
 void task_exec(Task *t);
 
 void task_exit();
+void task_context_switch(Task *from, Task *to);
 
 void task_run(Task *t) {
     asm volatile(
@@ -128,7 +130,8 @@ void task_run(Task *t) {
 }
 
 typedef struct CPULocal {
-    Context context;
+    Task *idle_task;
+    Task *current_task;
     struct limine_mp_info info;
 } CPULocal;
 

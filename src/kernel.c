@@ -89,32 +89,34 @@ static inline void init_hardware(void) {
     serial_init();
 }
 
-void ap_entry(struct limine_mp_info *info){
-    CPULocal *cpu_local = (CPULocal*)kmalloc(sizeof(CPULocal));
-    set_gs_base(cpu_local);
-    memcpy(&cpu_local->info, info, sizeof(struct limine_mp_info));
-
+void idle_task_entry(Task *current){
     while(1){
-ap_entry_resume:
-        while(lock_acquire(&task_lock) == false);
+        while(lock_acquire(&task_lock) == false){
+            cpu_pause();
+        };
         while(tasks == NULL){
             lock_release(&task_lock);
-            // cpu_pause();
-            while(lock_acquire(&task_lock) == false);
+            while(lock_acquire(&task_lock) == false){
+                cpu_pause();
+            };
         }
         Task *t = tasks;
         tasks = tasks->next;
         lock_release(&task_lock);
-
-        asm volatile(
-            "mov %%rsp, %0"
-            : "=r"(cpu_local->context.rsp)
-            :
-            :
-        );
-
-        task_run(t);
+        task_context_switch(current, t);
     }
+}
+
+void ap_entry(struct limine_mp_info *info){
+    CPULocal *cpu_local = (CPULocal*)kmalloc(sizeof(CPULocal));
+    Task *idle_task = (Task*)kmalloc(sizeof(Task));
+    task_init(idle_task, idle_task_entry);
+    cpu_local->idle_task = idle_task;
+    cpu_local->current_task = idle_task;
+    cpu_local->info = *info;
+    set_gs_base(cpu_local);
+
+    task_run(idle_task);
 }
 
 void kmain(void) {
@@ -416,16 +418,15 @@ void fibonacci_task(){
     fibonacci(100);
 }
 
-void task_init(Task *t, void (entry)(void))
+void task_init(Task *t, void (entry)(Task *t))
 {
-    uint64_t *stack = kmalloc(SIZE_4KB * 4);
+    uint64_t *stack = kmalloc(SIZE_4KB);
     t->stack = (uint64_t*)stack;
     t->entry = entry;
 
     uint64_t *sp = (uint64_t*)(pointer(stack) + SIZE_4KB);
     sp = (uint64_t*)((uintptr_t)sp & ~0xF);
 
-    *(--sp) = 0;
     *(--sp) = (uint64_t)task_exit;
     *(--sp) = (uint64_t)entry;
 
@@ -458,6 +459,13 @@ void task_exit() {
         "r"(RIP[info->lapic_id])
         : "memory"
     );
+}
+
+void task_context_switch(Task *from, Task *to)
+{
+    uint64_t *gs = get_gs_base();
+    CPULocal *cpu_local = (CPULocal*)gs;
+    cpu_local->current_task = to;
 }
 
 char *kgets()
