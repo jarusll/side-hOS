@@ -64,8 +64,9 @@ static uint64_t HHDM_OFFSET = {0};
 static PointerList PointerStore = {0};
 static uint64_t frame;
 static Lock serial_lock = {0};
-static Task *tasks = {0};
+static Task *tasks = NULL;
 static Lock task_lock = {0};
+static Lock memory_lock = {0};
 
 static bool pointer_push(PointerList *list, uint64_t *ptr)
 {
@@ -91,19 +92,41 @@ static inline void init_hardware(void) {
 
 void idle_task_entry(Task *current){
     while(1){
-        while(lock_acquire(&task_lock) == false){
-            cpu_pause();
-        };
+        while(lock_acquire(&task_lock) == false);
         while(tasks == NULL){
             lock_release(&task_lock);
             while(lock_acquire(&task_lock) == false){
                 cpu_pause();
-            };
+            }
         }
         Task *t = tasks;
         tasks = tasks->next;
         lock_release(&task_lock);
-        task_context_switch(current, t);
+
+        // while(lock_acquire(&serial_lock) == false);
+        // kputs("\r\nContext\r\n");
+        // kputhex(offsetof(Task, context));
+        // kputs("\r\nRegs\r\n");
+        // kputhex(offsetof(Context, r15));
+        // kputs("\r\n");
+        // kputhex(offsetof(Context, r14));
+        // kputs("\r\n");
+        // kputhex(offsetof(Context, r13));
+        // kputs("\r\n");
+        // kputhex(offsetof(Context, r12));
+        // kputs("\r\n");
+        // kputhex(offsetof(Context, rbp));
+        // kputs("\r\n");
+        // kputhex(offsetof(Context, rbx));
+        // kputs("\r\n");
+        // kputhex(offsetof(Context, rsp));
+        // kputs("\r\nRegs end\r\n");
+        // lock_release(&serial_lock);
+
+        CPULocal *cpu_local = get_cpu_state();
+        save_context();
+        cpu_local->current_task = t;
+        restore_context(t);
     }
 }
 
@@ -116,7 +139,7 @@ void ap_entry(struct limine_mp_info *info){
     cpu_local->info = *info;
     set_gs_base(cpu_local);
 
-    task_run(idle_task);
+    task_run(idle_task->context.rsp);
 }
 
 void kmain(void) {
@@ -167,6 +190,14 @@ void kmain(void) {
         halt();
     }
 
+    uint64_t i = 1000;
+    while (i-- > 0){
+        Task *factorialTask = (Task*)kmalloc(sizeof(Task));
+        task_init(factorialTask, factorial_task);
+
+        Task *fibonacciTask = (Task*)kmalloc(sizeof(Task));
+        task_init(fibonacciTask, fibonacci_task);
+    }
 
     uint32_t bsp_id = mp_request.response->bsp_lapic_id;
 
@@ -180,18 +211,11 @@ void kmain(void) {
 
     init_hardware();
 
+    while(lock_acquire(&serial_lock) == false);
     kputs("Hello, World!\r\n");
+    lock_release(&serial_lock);
 
-    Task *factorialTask = (Task*)kmalloc(sizeof(Task));
-    Task *fibonacciTask = (Task*)kmalloc(sizeof(Task));
-    task_init(factorialTask, factorial_task);
-    task_exec(factorialTask);
-
-    task_init(fibonacciTask, fibonacci_task);
-    task_exec(fibonacciTask);
-
-    asm volatile("cli");
-    while (1){ }
+    halt();
 
     while (1){
         kputs(">");
@@ -380,7 +404,15 @@ uint64_t factorial(uint64_t n) {
     for (uint64_t i = 2; i <= n; i++) {
         result *= i;
     }
-    while (lock_acquire(&serial_lock) == false);
+
+    int64_t i = 0;
+    while (lock_acquire(&serial_lock) == false){
+        i++;
+        cpu_pause();
+    };
+    kputs("Lock tries - ");
+    kputhex(i);
+    kputs(" - ");
     kputs("Factorial - ");
     kputhex(n);
     kputs(" - ");
@@ -390,8 +422,8 @@ uint64_t factorial(uint64_t n) {
     return result;
 }
 
-void factorial_task(){
-    factorial(10);
+void factorial_task(Task *t){
+    factorial(100);
 }
 
 uint64_t fibonacci(uint64_t n) {
@@ -404,7 +436,14 @@ uint64_t fibonacci(uint64_t n) {
         b = t;
     }
 
-    while (lock_acquire(&serial_lock) == false);
+    int64_t i = 0;
+    while (lock_acquire(&serial_lock) == false){
+        i++;
+        cpu_pause();
+    };
+    kputs("Lock tries - ");
+    kputhex(i);
+    kputs(" - ");
     kputs("Fibonacci - ");
     kputhex(n);
     kputs(" - ");
@@ -414,11 +453,13 @@ uint64_t fibonacci(uint64_t n) {
     return b;
 }
 
-void fibonacci_task(){
-    fibonacci(100);
+void fibonacci_task(Task *t){
+    fibonacci(1000000);
 }
 
-void task_init(Task *t, void (entry)(Task *t))
+void task_trampoline();
+
+void task_init(Task *t, void (entry)(Task *self))
 {
     uint64_t *stack = kmalloc(SIZE_4KB);
     t->stack = (uint64_t*)stack;
@@ -428,13 +469,12 @@ void task_init(Task *t, void (entry)(Task *t))
     sp = (uint64_t*)((uintptr_t)sp & ~0xF);
 
     *(--sp) = (uint64_t)task_exit;
+    *(--sp) = (uint64_t)t;
     *(--sp) = (uint64_t)entry;
+    *(--sp) = (uint64_t)task_trampoline;
 
     t->context.rsp = (uint64_t)sp;
-}
 
-void task_exec(Task *t)
-{
     while(!lock_acquire(&task_lock));
     t->next = NULL;
     if (tasks == NULL){
@@ -450,22 +490,12 @@ void task_exec(Task *t)
 }
 
 void task_exit() {
-    struct limine_mp_info* info = get_cpu_info();
-    asm volatile(
-        "mov %0, %%rsp\n\t"
-        "jmp *%1\n"
-        :
-        : "r"(RSP[0]),
-        "r"(RIP[info->lapic_id])
-        : "memory"
-    );
-}
+    CPULocal *cpu_local = get_cpu_state();
+    Task *idle = cpu_local->idle_task;
+    Task *done = cpu_local->current_task;
 
-void task_context_switch(Task *from, Task *to)
-{
-    uint64_t *gs = get_gs_base();
-    CPULocal *cpu_local = (CPULocal*)gs;
-    cpu_local->current_task = to;
+    cpu_local->current_task = idle;
+    restore_context(idle);
 }
 
 char *kgets()
@@ -595,6 +625,7 @@ uint64_t memory_nth_segment(Segment *seg, uint64_t n)
 
 uint64_t* kmalloc(uint64_t size)
 {
+    while(lock_acquire(&memory_lock) == false);
     if (size > SMALL_PAGE_MAXIMUM_SIZE) {
         uint64_t total_size = sizeof(HeapPage) + sizeof(uint64_t) + size;
         uint64_t frame_counts = (total_size + SIZE_4KB - 1) / SIZE_4KB;
@@ -603,6 +634,7 @@ uint64_t* kmalloc(uint64_t size)
         uint64_t *virtual_frame = address_physical_to_virtual(physical_frame);
         uint64_t *return_base = (uint64_t*)(pointer(virtual_frame) + sizeof(HeapPage) + sizeof(uint64_t));
 
+        lock_release(&memory_lock);
         return return_base;
     }
 
@@ -627,6 +659,7 @@ uint64_t* kmalloc(uint64_t size)
     }
 
     if (!node){
+        lock_release(&memory_lock);
         return 0;
     }
     next = node->next;
@@ -669,10 +702,12 @@ uint64_t* kmalloc(uint64_t size)
     }
     page->largest = max_size;
 
+    lock_release(&memory_lock);
     return return_base;
 }
 
 bool kfree(uint64_t *address){
+    while(lock_acquire(&memory_lock) == false);
 
     uint64_t *virtual_frame = pointer_frame(address);
     uint64_t physical_frame = address_virtual_to_physical(virtual_frame);
@@ -685,6 +720,7 @@ bool kfree(uint64_t *address){
         uint64_t total_size = sizeof(HeapPage) + sizeof(uint64_t) + size;
         uint64_t frame_counts = (total_size + SIZE_4KB - 1) / SIZE_4KB;
         memory_free_frames(physical_frame, frame_counts);
+        lock_release(&memory_lock);
         return true;
     }
 
@@ -717,7 +753,8 @@ bool kfree(uint64_t *address){
     }
 
     while (merge_cursor && merge_cursor->next){
-        uint8_t *end_of_cursor = pointer(merge_cursor) + sizeof(HeapNode) + merge_cursor->length + sizeof(uint64_t);
+        uint8_t *end_of_cursor = pointer(merge_cursor) + sizeof(HeapNode)
+                                    + merge_cursor->length + sizeof(uint64_t);
         if (end_of_cursor == (uint8_t*)(merge_cursor->next)){
             merge_cursor->length += sizeof(HeapNode);
             merge_cursor->length += merge_cursor->next->length;
@@ -727,6 +764,7 @@ bool kfree(uint64_t *address){
         }
     }
 
+    lock_release(&memory_lock);
     return true;
 }
 

@@ -8,9 +8,6 @@
 
 #include "serial.h"
 
-void fibonacci_task();
-void factorial_task();
-
 
 #define SIZE_4KB 0x1000
 
@@ -97,37 +94,48 @@ typedef enum {
 } TaskStatus;
 
 typedef struct Context {
-    uint64_t r15, r14, r13, r12;
-    uint64_t rbx, rbp, rsp;
-    // uint64_t r11, r10, r9, r8;
-    // uint64_t rsi, rdi, rbp, rdx, rcx, rbx, rax;
-    // uint64_t rip, cs, rflags, rsp, ss;
+    uint64_t r15;
+    uint64_t r14;
+    uint64_t r13;
+    uint64_t r12;
+    uint64_t r11;
+    uint64_t r10;
+    uint64_t  r9;
+    uint64_t  r8;
+    uint64_t rsi;
+    uint64_t rdi;
+    uint64_t rdx;
+    uint64_t rcx;
+    uint64_t rbx;
+    uint64_t rax;
+    uint64_t rbp;
+    uint64_t rsp;
+    uint64_t rflags;
 } Context;
 
 typedef struct Task {
     uint64_t *stack;
-    void (*entry)(Task* t);
+    void (*entry)(struct Task* t);
     uint64_t id;
     Context context;
     TaskStatus status;
     struct Task *next;
 } Task;
 
-void task_init(Task *t, void (entry)(Task*));
-void task_exec(Task *t);
+
+void factorial_task(Task *t);
+void fibonacci_task(Task *t);
+
+void task_init(Task *t, void (entry)(Task* self));
 
 void task_exit();
 void task_context_switch(Task *from, Task *to);
+void task_run(uint64_t rsp);
 
-void task_run(Task *t) {
-    asm volatile(
-        "mov %0, %%rsp\n"
-        "ret\n"
-        :
-        : "r"(t->context.rsp)
-        : "memory"
-    );
-}
+void task_destroy(Task *t);
+
+void save_context();
+void restore_context(Task *t);
 
 typedef struct CPULocal {
     Task *idle_task;
@@ -239,7 +247,7 @@ static inline uint64_t rdtscp() {
 }
 
 static inline void cpu_pause(void){
-    asm volatile("pause");
+    // asm volatile("pause");
 }
 
 
@@ -266,8 +274,8 @@ static inline void *get_gs_base(void) {
     return (void *)(((uint64_t)hi << 32) | lo);
 }
 
-static inline struct limine_mp_info* get_cpu_info(){
-    return (struct limine_mp_info*)get_gs_base();
+static inline CPULocal* get_cpu_state(){
+    return (CPULocal*)get_gs_base();
 }
 
 #endif

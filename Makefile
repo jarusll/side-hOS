@@ -30,7 +30,7 @@ override CFLAGS += \
     -mno-sse \
     -mno-sse2 \
     -mno-red-zone \
-    -mcmodel=kernel \
+    -mcmodel=kernel
 
 # Internal linker flags that should not be changed by the user.
 override LDFLAGS += \
@@ -42,10 +42,10 @@ override LDFLAGS += \
     -T linker.lds
 
 # Virt flags
-QEMU_FLAGS := -m 1G -cdrom $(BUILD_DIR)/side-hOS.iso \
+QEMU_FLAGS := -m 128M -cdrom $(BUILD_DIR)/side-hOS.iso \
     -serial stdio \
     -display none \
-    -smp 2
+    -smp 11
 #     -no-reboot \
 #     -d int,cpu_reset
 
@@ -54,7 +54,7 @@ QEMU_FLAGS := -m 1G -cdrom $(BUILD_DIR)/side-hOS.iso \
 all: $(BUILD_DIR)/kernel.elf
 
 # Link rules for the final executable.
-$(BUILD_DIR)/kernel.elf: $(BUILD_DIR)/kernel.o $(BUILD_DIR)/serial.o
+$(BUILD_DIR)/kernel.elf: $(BUILD_DIR)/kernel.o $(BUILD_DIR)/serial.o $(BUILD_DIR)/task.o
 	mkdir -p "$(dir $@)"
 	$(LD) $(LDFLAGS) $^ -o $@
 
@@ -66,6 +66,15 @@ $(BUILD_DIR)/kernel.o: $(SRC)/kernel.c
 $(BUILD_DIR)/serial.o: $(SRC)/serial.c
 	mkdir -p "$(dir $@)"
 	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/task.o: $(SRC)/task.S $(BUILD_DIR)/offsets.inc
+	mkdir -p "$(dir $@)"
+	$(CC) $(CFLAGS) -I$(BUILD_DIR) -c $< -o $@
+
+$(BUILD_DIR)/offsets.inc: $(SRC)/offsets.c
+	mkdir -p "$(dir $@)"
+	$(CC) $(CFLAGS) -S $< -o $(BUILD_DIR)/offsets.s
+	grep '\.equ' $(BUILD_DIR)/offsets.s > $@
 
 # Remove object files and the final executable.
 .PHONY: clean
